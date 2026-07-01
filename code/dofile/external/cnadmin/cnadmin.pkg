@@ -1,0 +1,19 @@
+v 3
+d cnadmin. Matching Chinese Administrative Divisions Across Years
+d 
+d cnadmin is a Python-backed Stata command that tracks the historical 
+d changes of China's administrative codes and names (e.g., county-to-district 
+d upgrades, mergers, and complex splits). Utilizing a temporal Directed 
+d Acyclic Graph (DAG), it supports both forward and backward tracing 
+d and automatically generates proper apportionment weights for 1-to-N splits 
+d to prevent data attrition.
+d 
+d Author: Qiteng Wang
+d Affiliation: Business School, Nanjing University
+d E-mail: qitengwang@foxmail.com
+d 
+d Distribution-Date: 20260320
+d 
+f cnadmin.ado
+f cnadmin.sthlp
+f cnadmin_data.maint
