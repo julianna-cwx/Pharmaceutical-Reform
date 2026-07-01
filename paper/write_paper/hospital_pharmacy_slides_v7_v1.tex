@@ -1,0 +1,211 @@
+% !TEX root = hospital_pharmacy_slides_v7_v1.tex
+% !TEX program = xelatex
+\documentclass{beamer}
+
+\usepackage[UTF8]{ctex}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\title{Pharmaceutical Reform and Pharmacy Entry}
+\subtitle{County-level Results, v1: Original Policy-Year Timing}
+\author{Wenxia Chen}
+\date{June 26, 2026}
+
+\newcommand{\countyvoneimage}[1]{%
+\IfFileExists{../hospital_with_pharmacy/integrated_results/county_v1/#1}{%
+\includegraphics[width=\textwidth]{../hospital_with_pharmacy/integrated_results/county_v1/#1}%
+}{%
+\fbox{\parbox[c][0.42\textheight][c]{0.95\textwidth}{\centering \scriptsize Missing county v1 image:\\#1}}%
+}%
+}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\section{County-level Results}
+
+\begin{frame}{Empirical Setting}
+\small
+\begin{itemize}\setlength\itemsep{0.6em}
+    \item Unit of analysis: county-by-year panel.
+    \item Controlled sample: 2012--2019, with population, nighttime lights, and road density.
+    \item v1 timing uses the original policy year:
+    \[
+        Reform_{ct}=\mathbf{1}\{t\geq PolicyYear_c\}.
+    \]
+    \item Standard errors are clustered at the county level.
+    \item TWFE and CSDID event-study figures use the same outcome definitions and event-time window as the five-estimator robustness figures.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{TWFE Baseline Results: Count and ln(count)}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{8pt}
+\begin{tabular}{lcc}
+\toprule
+& Count & ln(count) \\
+\midrule
+Post policy
+& 5.449$^{***}$ & 0.020 \\
+& (1.454) & (0.014) \\
+\midrule
+County FE & Yes & Yes \\
+Year FE & Yes & Yes \\
+Controls & Yes & Yes \\
+\midrule
+N & 16,961 & 15,469 \\
+R$^2$ & 0.845 & 0.882 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.8em}
+\raggedright
+\tiny Controls include log population, log nighttime lights, and log road density.
+\end{frame}
+
+\begin{frame}{TWFE Event-study Results}
+\centering
+\begin{columns}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{twfe_event_pharmacy_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{twfe_event_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\tiny Relative year $-1$ is omitted. County and year fixed effects are absorbed.
+\end{frame}
+
+\begin{frame}{CSDID Results}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{8pt}
+\begin{tabular}{lcc}
+\toprule
+& Count & ln(count) \\
+\midrule
+ATT
+& -2.178 & 0.010 \\
+& (2.077) & (0.032) \\
+\midrule
+Estimator & CSDID & CSDID \\
+Controls & Yes & Yes \\
+Control group & Not-yet-treated & Not-yet-treated \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.8em}
+\raggedright
+\tiny CSDID uses Callaway--Sant'Anna group-time ATT with doubly robust inverse probability weighting and county-clustered standard errors.
+\end{frame}
+
+\begin{frame}{CSDID Event-study Results}
+\centering
+\begin{columns}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{csdid_event_pharmacy_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{csdid_event_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\tiny Same event window as the TWFE and five-estimator event-study figures; relative year $-1$ is omitted.
+\end{frame}
+
+\begin{frame}{Five-estimator Event-study Robustness}
+\centering
+\begin{columns}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{event_5estimators_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{event_5estimators_ln_count.png}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\tiny Estimators: TWFE, Callaway--Sant'Anna CSDID, Sun--Abraham interaction-weighted, Borusyak--Jaravel--Spiess imputation, and stacked event study.
+\end{frame}
+
+\begin{frame}{Continuous DID: OLS and IV Baseline Results}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{OLS} & \multicolumn{2}{c}{IV: 1959 stock} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+& Count & ln(count) & Count & ln(count) \\
+\midrule
+Post $\times$ ln(public hospitals)
+& 20.672$^{***}$ & -0.068$^{**}$ & 99.574$^{***}$ & 0.162 \\
+& (3.776) & (0.024) & (15.529) & (0.097) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & Yes & Yes & Yes \\
+Controls & Yes & Yes & Yes & Yes \\
+\midrule
+N & 16,961 & 15,469 & 13,788 & 12,463 \\
+R$^2$ / K-P F & 0.847 & 0.882 & 81.389 & 135.751 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.6em}
+\raggedright
+\tiny IV instruments interact post policy with the 1959 epidemiology-station stock.
+\end{frame}
+
+\begin{frame}{Continuous DID Event-study: OLS}
+\centering
+\begin{columns}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{continuous_did_event_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{continuous_did_event_ln_count.png}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\tiny Event-time indicators are interacted with baseline public-hospital intensity.
+\end{frame}
+
+\begin{frame}{Continuous DID Event-study: IV}
+\centering
+\begin{columns}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{continuous_did_event_iv_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\countyvoneimage{continuous_did_event_iv_ln_count.png}
+\end{column}
+\end{columns}
+
+\vspace{0.3em}
+\tiny Dynamic IV first stages are weak, so these figures are diagnostic rather than the main IV evidence.
+\end{frame}
+
+\begin{frame}{Takeaways}
+\small
+\begin{itemize}\setlength\itemsep{0.65em}
+    \item TWFE suggests a positive count effect under original policy timing, while the log-count effect is small.
+    \item CSDID static ATT is not positive for count or log count, so staggered-timing robustness weakens the TWFE interpretation.
+    \item Five-estimator event-study figures place TWFE and CSDID in the same event-time comparison set.
+    \item Continuous DID OLS and static IV both imply larger count effects in counties with more baseline public hospitals.
+    \item IV event-study plots are retained as diagnostics; the main IV evidence is the static continuous-DID specification.
+\end{itemize}
+\end{frame}
+
+\end{document}

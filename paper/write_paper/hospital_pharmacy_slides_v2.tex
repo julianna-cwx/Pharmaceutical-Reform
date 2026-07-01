@@ -1,0 +1,652 @@
+\documentclass{beamer}
+
+\usepackage[UTF8]{ctex}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multirow}
+
+% ===== 极简风格 =====
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{} % 去掉右下角按钮
+\setbeamertemplate{footline}[frame number] % 只保留页码
+
+% 标题信息
+\title{Pharmaceutical Reform and Pharmacy Entry: Evidence from Hospitals in China}
+\author{Wenxia Chen}
+\date{June 5, 2026}
+
+\begin{document}
+
+% ================= 标题页 =================
+\frame{\titlepage}
+
+
+% ================= 数据 =================
+\begin{frame}{Data Sources}
+
+\textbf{Hospital Data.} Information on hospitals is obtained from business registration records, including hospital name, classification (level), industry code, province, county, and geographic coordinates.
+
+\medskip
+
+\textbf{Pharmacy Data.} Pharmacy data are collected from Dianping, including merchant name, industry classification, geographic coordinates, and an indicator for chain affiliation.
+
+\medskip
+
+\textbf{Reform Data.} Information on the timing and implementation of the reform is compiled from official government policy documents and related reports.
+
+\medskip
+
+\textbf{Nighttime Light Data.} VIIRS nighttime light (NTL) data are extracted from Google Earth Engine, capturing average luminosity within 1km, 2km, and 3km buffers around each hospital.
+
+\end{frame}
+
+\begin{frame}{Descriptive Statistics}
+
+\centering
+{\scriptsize
+\begin{tabular}{lccccc}
+\toprule
+Variable & Mean & SD & P25 & P50 & P75 \\
+\midrule
+
+\multicolumn{6}{l}{\textit{Panel A. Pharmacy outcomes}} \\
+Pharmacy Count (1km) & 10.898 & 11.800 & 2 & 7 & 17 \\
+Pharmacy Count (2km) & 30.820 & 31.416 & 5 & 22 & 46 \\
+Pharmacy Count (3km) & 53.411 & 55.518 & 10 & 37 & 79 \\
+Log Pharmacy (1km)   & 1.897 & 1.192 & 1.099 & 2.079 & 2.890 \\
+Log Pharmacy (2km)   & 2.770 & 1.405 & 1.792 & 3.135 & 3.850 \\
+Log Pharmacy (3km)   & 3.249 & 1.499 & 2.398 & 3.638 & 4.382 \\
+Has Pharmacy (1km)   & 0.820 & 0.384 & 1 & 1 & 1 \\
+Has Pharmacy (2km)   & 0.894 & 0.308 & 1 & 1 & 1 \\
+Has Pharmacy (3km)   & 0.920 & 0.271 & 1 & 1 & 1 \\
+
+\addlinespace[0.15cm]
+\multicolumn{6}{l}{\textit{Panel B. Nighttime lights and treatment status}} \\
+Log NTL Mean (1km) & 2.679 & 1.000 & 2.082 & 2.896 & 3.454 \\
+Log NTL Mean (2km) & 2.531 & 1.013 & 1.885 & 2.706 & 3.339 \\
+Log NTL Mean (3km) & 2.394 & 1.021 & 1.682 & 2.520 & 3.223 \\
+DID   & 0.291 & 0.454 & 0 & 0 & 1 \\
+Treat & 0.338 & 0.473 & 0 & 0 & 1 \\
+Post  & 0.806 & 0.395 & 1 & 1 & 1 \\
+
+\bottomrule
+\end{tabular}
+}
+
+\end{frame}
+% ================= Empirical Strategy =================
+\begin{frame}{Empirical Strategy: TWFE}
+
+\[
+Y_{ict} = \beta_0+\beta_1 Reform_{ct}+\beta_2 NTL_{ict} + \delta_i + \delta_t + \epsilon_{ict}
+\]
+
+\vspace{0.4cm}
+
+\begin{itemize}
+    \item $Y_{ict}$: Number of pharmacies around hospital $i$ in county $c$ at time $t$
+    \item $Reform_{ct}$: Policy exposure at the county-year level
+    \item $NTL_{ict}$: Nighttime light intensity (proxy for local economic activity)
+    \item $\delta_i$: Hospital fixed effects
+    \item $\delta_t$: Year fixed effects
+\end{itemize}
+
+\vspace{0.4cm}
+
+
+\end{frame}
+
+\begin{frame}{Empirical Strategy: CS-DID}
+
+\[
+ATT(g,t) = \mathbb{E}[Y_t(1) - Y_t(0) \mid G = g]
+\]
+
+\vspace{0.4cm}
+
+\begin{itemize}
+    \item $g$: First year of reform (cohort)
+    \item $t$: Year
+    \item Compare treated units with not-yet-treated units
+\end{itemize}
+
+\vspace{0.4cm}
+
+\begin{itemize}
+    \item Allows for heterogeneous treatment effects
+    \item Avoids bias from two-way fixed effects under staggered adoption
+\end{itemize}
+
+\vspace{0.4cm}
+
+\centering
+\textbf{Estimate dynamic and cohort-specific treatment effects}
+
+\end{frame}
+
+
+% ================= TWFE 基准回归 =================
+
+\begin{frame}{Sensitivity to Fixed Effects and Controls (2km)}
+
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+
+\begin{table}[htbp]
+\centering
+
+\begin{tabular}{lccccc}
+\toprule
+& (1) & (2) & (3) & (4) & (5) \\
+\midrule
+
+DID
+& 0.800***
+& -2.465**
+& 0.527
+& 0.520
+& 0.062 \\
+& (0.167)
+& (0.773)
+& (0.441)
+& (0.441)
+& (0.398) \\
+
+\midrule
+
+Year FE
+& No & Yes & Yes & Yes & Yes \\
+
+Hospital FE
+& No & No & Yes & Yes & Yes \\
+
+NTL Control
+& No & No & No & Yes & Yes \\
+
+Province Trend
+& No & No & No & No & Yes \\
+
+\midrule
+
+N
+& 166,113
+& 165,909
+& 164,703
+& 164,674
+& 164,674 \\
+
+R$^{2}$
+& 0.000
+& 0.040
+& 0.905
+& 0.905
+& 0.910 \\
+
+\bottomrule
+\end{tabular}
+
+\end{table}
+
+\end{frame}
+
+\begin{frame}{Sensitivity to Fixed Effects and Controls (Log Outcome, 2km)}
+
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+
+\begin{table}[htbp]
+\centering
+
+\begin{tabular}{lccccc}
+\toprule
+& (1) & (2) & (3) & (4) & (5) \\
+\midrule
+
+DID
+& 0.181***
+& -0.043
+& 0.004
+& 0.007
+& 0.003 \\
+& (0.007)
+& (0.032)
+& (0.018)
+& (0.018)
+& (0.017) \\
+
+\midrule
+
+Year FE
+& No & Yes & Yes & Yes & Yes \\
+
+Hospital FE
+& No & No & Yes & Yes & Yes \\
+
+NTL Control
+& No & No & No & Yes & Yes \\
+
+Province Trend
+& No & No & No & No & Yes \\
+
+\midrule
+
+N
+& 166,113
+& 165,909
+& 164,703
+& 164,674
+& 164,674 \\
+
+R$^{2}$
+& 0.003
+& 0.111
+& 0.919
+& 0.919
+& 0.923 \\
+
+\bottomrule
+\end{tabular}
+
+\end{table}
+
+\end{frame}
+
+\begin{frame}{Baseline DID Results: TWFE (Level)}
+
+\begin{itemize}
+    \item Outcome: Pharmacy count around hospitals
+    \item Fixed effects: Hospital and year
+    \item Standard errors: clustered at county level
+\end{itemize}
+
+\vspace{0.3em}
+\centering
+\footnotesize
+
+\begin{table}[htbp]\centering
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{\textit{Baseline}} 
+& \multicolumn{3}{c}{\textit{+ Nighttime Lights}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+& (1) & (2) & (3) & (4) & (5) & (6) \\
+& 1km & 2km & 3km & 1km & 2km & 3km \\
+\midrule
+
+DID 
+& 0.065 & 0.527 & 1.632$^{*}$ 
+& 0.062 & 0.520 & 1.609$^{*}$ \\
+& (0.169) & (0.441) & (0.784) 
+& (0.169) & (0.441) & (0.782) \\
+
+\midrule
+Hospital FE & Yes & Yes & Yes & Yes & Yes & Yes \\
+Year FE     & Yes & Yes & Yes & Yes & Yes & Yes \\
+NTL Control & No  & No  & No  & Yes & Yes & Yes \\
+\midrule
+N 
+& 164{,}703 & 164{,}703 & 164{,}703 
+& 164{,}674 & 164{,}674 & 164{,}674 \\
+R$^{2}$ 
+& 0.895 & 0.905 & 0.910 
+& 0.895 & 0.905 & 0.910 \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{frame}
+
+
+
+\begin{frame}{Baseline DID Results: TWFE (Log)}
+
+\begin{itemize}
+    \item Outcome: Log of pharmacy count around hospitals
+    \item Fixed effects: Hospital and year
+    \item Standard errors: clustered at county level
+\end{itemize}
+
+\vspace{0.3em}
+
+\centering
+\footnotesize
+
+\begin{table}[htbp]\centering
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{\textit{Baseline}}
+& \multicolumn{3}{c}{\textit{+ Nighttime Lights}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+& (1) & (2) & (3) & (4) & (5) & (6) \\
+& 1km & 2km & 3km & 1km & 2km & 3km \\
+\midrule
+
+DID
+& 0.004 & 0.004 & -0.004
+& 0.005 & 0.007 & 0.000 \\
+& (0.016) & (0.018) & (0.020)
+& (0.016) & (0.018) & (0.019) \\
+
+NTL
+&  &  & 
+& 0.051*** & 0.153*** & 0.244*** \\
+&
+&
+&
+& (0.015) & (0.022) & (0.029) \\
+
+\midrule
+
+Hospital FE
+& Yes & Yes & Yes
+& Yes & Yes & Yes \\
+
+Year FE
+& Yes & Yes & Yes
+& Yes & Yes & Yes \\
+
+NTL Control
+& No & No & No
+& Yes & Yes & Yes \\
+
+\midrule
+
+N
+& 164{,}703 & 164{,}703 & 164{,}703
+& 164{,}674 & 164{,}674 & 164{,}674 \\
+
+R$^{2}$
+& 0.908 & 0.919 & 0.922
+& 0.908 & 0.919 & 0.923 \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{frame}
+
+% ================= Event Study: TWFE =================
+\begin{frame}{Event Study: TWFE (Level)}
+
+\begin{center}
+\includegraphics[width=0.85\textwidth]{parallel_ols_2km.png}
+\end{center}
+
+\end{frame}
+
+\begin{frame}{Event Study: TWFE (Log)}
+
+\begin{center}
+\includegraphics[width=0.85\textwidth]{parallel_ols_log_2km.png}
+\end{center}
+
+\end{frame}
+
+
+
+% ================= CSDID 回归结果 =================
+
+\begin{frame}{CS-DID: Counts Level}
+
+\textbf{Callaway and Sant'Anna (2021)}
+
+\begin{itemize}
+    \item Control: never treated
+    \item Standard errors: clustered at county level
+\end{itemize}
+
+\vspace{0.5em}
+\centering
+\footnotesize
+\begin{tabular}{lccc}
+\toprule
+ & (1) & (2) & (3) \\
+ & pharmacy$\sim$1km & pharmacy$\sim$2km & pharmacy$\sim$3km \\
+\midrule
+ATT &  0.394***  &   1.112***     &     2.298***    \\
+    & (0.118) &   (0.301)       &  (0.524)      \\
+\midrule
+N   &   110,087   &  110,087   &  110,087  \\
+\bottomrule
+\end{tabular}
+
+\end{frame}
+
+
+\begin{frame}{CS-DID: Log Level}
+
+\textbf{Callaway and Sant'Anna (2021)}
+
+\begin{itemize}
+    \item Outcome: significant positive
+    \item Control: never treated
+\end{itemize}
+
+\vspace{0.5em}
+\centering
+\footnotesize
+\begin{tabular}{lccc}
+\toprule
+ & (1) & (2) & (3) \\
+ & ln(pharmacy$\sim$1km) & ln(pharmacy$\sim$2km) & ln(pharmacy$\sim$3km) \\
+\midrule
+ATT &  0.019 &   0.026*     &     0.025*    \\
+    & (0.012) &   (0.013)       &  (0.014)      \\
+\midrule
+N   &   110,087   &  110,087   &  110,087  \\
+\bottomrule
+\end{tabular}
+
+\end{frame}
+
+
+
+
+\begin{frame}{CS-DID: Not Yet Treated Control}
+
+\vspace{0.5em}
+\centering
+\footnotesize
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\centering
+\begin{tabular}{lccc}
+\toprule
+ & \multicolumn{3}{c}{Counts Level} \\
+\cmidrule(lr){2-4}
+ & (1) & (2) & (3) \\
+ & 1km & 2km & 3km \\
+\midrule
+ATT &  1.556***  &   4.715***     &    8.774***      \\
+    & (0.121) &   (0.328)       &  (0.594)      \\
+\midrule
+N   &  39,176   & 39,176  & 39,176  \\
+\bottomrule
+\end{tabular}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\begin{tabular}{lccc}
+\toprule
+ & \multicolumn{3}{c}{Log Level} \\
+\cmidrule(lr){2-4}
+ & (1) & (2) & (3) \\
+ & 1km & 2km & 3km \\
+\midrule
+ATT &  0.129*** &   0.169***       &    0.187***       \\
+    & (0.011) &   (0.013)       &   (0.014)      \\
+\midrule
+N   &  39,176   & 39,176   & 39,176  \\
+\bottomrule
+\end{tabular}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+
+
+% ================= Event Study: CSDID =================
+\begin{frame}{Event Study: CS-DID (Base)}
+
+\begin{center}
+\includegraphics[width=0.85\textwidth]{cs_event_2km.png}
+\end{center}
+
+\end{frame}
+
+\begin{frame}{Event Study: CS-DID (Log)}
+
+\begin{center}
+\includegraphics[width=0.85\textwidth]{cs_event_log_2km.png}
+\end{center}
+
+\end{frame}
+
+
+% ================= PPML =================
+
+
+
+\begin{frame}{PPML: Baseline vs NTL Control}
+
+\centering
+\footnotesize
+
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{\textit{Baseline}} 
+& \multicolumn{3}{c}{\textit{+ Nighttime Lights}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+& (1) & (2) & (3) & (4) & (5) & (6) \\
+& 1km & 2km & 3km & 1km & 2km & 3km \\
+\midrule
+
+DID
+& -0.021
+& -0.013
+& -0.006
+& -0.019
+& -0.010
+& -0.001 \\
+& (0.017)
+& (0.015)
+& (0.015)
+& (0.016)
+& (0.015)
+& (0.015) \\
+
+\midrule
+
+Hospital FE
+& Yes & Yes & Yes & Yes & Yes & Yes \\
+
+Year FE
+& Yes & Yes & Yes & Yes & Yes & Yes \\
+
+NTL Control
+& No & No & No & Yes & Yes & Yes \\
+
+\midrule
+
+N
+& 147{,}853
+& 156{,}693
+& 159{,}764
+& 147{,}853
+& 156{,}693
+& 159{,}764 \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{frame}
+
+
+\begin{frame}{PPML + Province Trend: Baseline vs NTL Control}
+
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+
+\begin{table}[htbp]
+\centering
+
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{\textit{Province Trend}}
+& \multicolumn{3}{c}{\textit{Province Trend + NTL}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+
+& (1) & (2) & (3) & (4) & (5) & (6) \\
+& 1km & 2km & 3km & 1km & 2km & 3km \\
+\midrule
+
+DID
+& -0.012
+& -0.007
+& -0.003
+& -0.010
+& -0.004
+& 0.001 \\
+& (0.015)
+& (0.013)
+& (0.012)
+& (0.014)
+& (0.012)
+& (0.012) \\
+
+\midrule
+
+Hospital FE
+& Yes & Yes & Yes & Yes & Yes & Yes \\
+
+Year FE
+& Yes & Yes & Yes & Yes & Yes & Yes \\
+
+Province Trend
+& Yes & Yes & Yes & Yes & Yes & Yes \\
+
+NTL Control
+& No & No & No & Yes & Yes & Yes \\
+
+\midrule
+
+N
+& 147{,}853
+& 156{,}693
+& 159{,}764
+& 147{,}853
+& 156{,}693
+& 159{,}764 \\
+
+\bottomrule
+\end{tabular}
+
+\end{table}
+
+\end{frame}
+
+
+\begin{frame}{Event Study: PPML (2km)}
+
+\begin{center}
+\includegraphics[width=0.85\textwidth]{parallel_ppml_2km.png}
+\end{center}
+
+\end{frame}
+
+
+
+
+
+\end{document}

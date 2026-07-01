@@ -1,0 +1,44 @@
+# Data are kept locally and are not uploaded to GitHub.
+data/raw/**
+data/processed/**
+!data/raw/**/
+!data/processed/**/
+!data/raw/**/.gitkeep
+!data/processed/**/.gitkeep
+
+# Generated outputs
+output/**
+!output/**/
+!output/**/.gitkeep
+
+# Local leftovers that could not be moved while open
+/hospital/
+/pharmacy/
+
+# Stata generated files
+*.log
+*.smcl
+*.gph
+*.tmp
+*.bak
+*.dta~
+
+# Python generated files and local environments
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+.venv/
+venv/
+env/
+
+# Large model/checkpoint artifacts
+*.ckpt
+*.pth
+*.safetensors
+*.bin
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

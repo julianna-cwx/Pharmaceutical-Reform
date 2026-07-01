@@ -1,0 +1,492 @@
+\documentclass{beamer}
+
+\usepackage[UTF8]{ctex}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multirow}
+
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\graphicspath{
+    {../hospital_with_pharmacy/integrated_results/county/}
+}
+
+\title{Pharmaceutical Reform and Pharmacy Entry}
+\subtitle{County-level Regression Results, v5}
+\author{Wenxia Chen}
+\date{June 17, 2026}
+
+\newcommand{\countyimage}[1]{%
+\IfFileExists{../hospital_with_pharmacy/integrated_results/county/#1}{%
+\includegraphics[width=\textwidth]{#1}%
+}{%
+\fbox{\parbox[c][0.44\textheight][c]{0.95\textwidth}{\centering \scriptsize Missing image:\\#1}}%
+}%
+}
+
+\begin{document}
+
+\frame{\titlepage}
+
+% ================= Model and data =================
+
+\section{Research Design}
+
+\begin{frame}{County-level Empirical Setting}
+
+\small
+\begin{itemize}\setlength\itemsep{0.65em}
+    \item Unit of analysis: county-by-year panel, 2012--2022.
+    \item Main controlled sample: 2012--2019, excluding counties treated in 2012, with population, nighttime lights, and road-density controls.
+    \item Main treatment indicator:
+    \[
+        DID_{ct} = \mathbf{1}\{t \geq PolicyYear_c\}.
+    \]
+    \item Baseline TWFE specification:
+    \[
+        Y_{ct}=\beta DID_{ct}+X_{ct}'\gamma+\alpha_c+\lambda_t+\varepsilon_{ct}.
+    \]
+    \item Preferred high-dimensional FE specification replaces year FE with province-by-year FE:
+    \[
+        Y_{ct}=\beta DID_{ct}+X_{ct}'\gamma+\alpha_c+\delta_{p(c)t}+\varepsilon_{ct}.
+    \]
+    \item Standard errors are clustered at the county level.
+\end{itemize}
+
+\vspace{0.3em}
+\tiny Controls include log population, log nighttime lights, and log road density where available.
+
+\end{frame}
+
+\begin{frame}{County Sample and Descriptive Statistics}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+
+\begin{tabular}{lrrrrrr}
+\toprule
+Variable & N & Mean & SD & P25 & Median & P75 \\
+\midrule
+Pharmacy count & 17,004 & 95.22 & 108.77 & 26 & 63 & 128 \\
+Log pharmacy count & 15,512 & 4.14 & 1.15 & 3.54 & 4.26 & 4.92 \\
+Has pharmacy & 17,004 & 0.91 & 0.28 & 1 & 1 & 1 \\
+Chain pharmacy count & 17,004 & 8.09 & 27.30 & 0 & 0 & 1 \\
+Non-chain pharmacy count & 17,004 & 87.13 & 96.55 & 25 & 59 & 117 \\
+DID & 17,004 & 0.64 & 0.48 & 0 & 1 & 1 \\
+Log population & 17,004 & 12.90 & 0.78 & 12.48 & 12.97 & 13.47 \\
+Log nighttime lights & 17,004 & 0.72 & 0.92 & 0.08 & 0.27 & 1.03 \\
+Log road density & 17,004 & 0.88 & 0.57 & 0.47 & 0.74 & 1.16 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\raggedright
+\tiny Source: county-level descriptive statistics from \texttt{desc\_county.rtf}. Main sample uses observations with road-density controls.
+
+\end{frame}
+
+\begin{frame}{Sample Support by Year}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabular}{lrrrr}
+\toprule
+Year & County-year N & Road sample share & No-road sample share & DID share \\
+\midrule
+2012 & 2,079 & 0.770 & 0.770 & 0.030 \\
+2013 & 2,194 & 0.773 & 0.773 & 0.045 \\
+2014 & 2,313 & 0.775 & 0.775 & 0.226 \\
+2015 & 2,623 & 0.780 & 0.780 & 0.556 \\
+2016 & 2,974 & 0.786 & 0.786 & 0.658 \\
+2017 & 3,135 & 0.788 & 0.788 & 1.000 \\
+2018 & 3,242 & 0.787 & 0.787 & 1.000 \\
+2019 & 3,176 & 0.789 & 0.789 & 1.000 \\
+2020 & 3,175 & 0.000 & 0.805 & 1.000 \\
+2021 & 3,184 & 0.000 & 0.000 & 1.000 \\
+2022 & 3,181 & 0.000 & 0.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\raggedright
+\tiny The main controlled specifications use the road sample through 2019. The no-road robustness column extends to 2020.
+
+\end{frame}
+
+% ================= Main regressions =================
+
+\section{Main County Regressions}
+
+\begin{frame}{TWFE DID: Pharmacy Count}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+& FE & + controls & + prov-year & 2012--2020 no road \\
+\midrule
+Post policy
+& 7.652$^{***}$ & 5.449$^{***}$ & 5.188$^{***}$ & 5.396$^{***}$ \\
+& (1.474) & (1.454) & (1.493) & (1.669) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & Yes & No & No \\
+Province-year FE & No & No & Yes & Yes \\
+Controls & No & Yes & Yes & Yes \\
+\midrule
+N & 16,961 & 16,961 & 16,961 & 19,496 \\
+R$^2$ & 0.824 & 0.845 & 0.872 & 0.877 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.5em}
+\raggedright
+\tiny Outcome is county pharmacy count. Controls include log population, log nighttime lights, and log road density unless otherwise noted.
+
+\end{frame}
+
+\begin{frame}{TWFE DID: Log Count and Extensive Margin}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+& ln FE & Has FE & ln prov-year & Has prov-year \\
+\midrule
+Post policy
+& 0.020 & 0.030$^{***}$ & 0.026 & 0.025$^{***}$ \\
+& (0.014) & (0.004) & (0.016) & (0.005) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & Yes & No & No \\
+Province-year FE & No & No & Yes & Yes \\
+Controls & Yes & Yes & Yes & Yes \\
+\midrule
+N & 15,469 & 16,961 & 15,464 & 16,961 \\
+R$^2$ & 0.882 & 0.664 & 0.906 & 0.740 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.5em}
+\raggedright
+\tiny Log count excludes zero-count counties. Extensive margin is an indicator for having at least one pharmacy.
+
+\end{frame}
+
+\begin{frame}{Continuous DID by Baseline Public-hospital Intensity}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+& Count FE & ln Count FE & Count prov-year & ln Count prov-year \\
+\midrule
+Post policy $\times$ ln(public hospitals in 2012 + 1)
+& 20.672$^{***}$ & -0.068$^{***}$ & 12.179$^{***}$ & -0.118$^{***}$ \\
+& (3.776) & (0.024) & (3.392) & (0.024) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & Yes & No & No \\
+Province-year FE & No & No & Yes & Yes \\
+Controls & Yes & Yes & Yes & Yes \\
+\midrule
+N & 16,961 & 15,469 & 16,961 & 15,464 \\
+R$^2$ & 0.847 & 0.882 & 0.873 & 0.906 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.5em}
+\raggedright
+\tiny Counties with more baseline public hospitals show larger post-reform level-count increases, but lower log-count estimates.
+
+\end{frame}
+
+\begin{frame}{CSDID Average Effects: Count and Log Count}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{7pt}
+
+\begin{tabular}{lcc}
+\toprule
+& Pharmacy count & Log pharmacy count \\
+\midrule
+ATT
+& -2.178 & 0.010 \\
+& (2.077) & (0.032) \\
+\addlinespace
+Pre-average
+& -2.403 & 0.038 \\
+& (2.696) & (0.077) \\
+\addlinespace
+Post-average
+& -4.021 & -0.008 \\
+& (2.413) & (0.039) \\
+\midrule
+Controls & Yes & Yes \\
+Control group & Not-yet-treated & Not-yet-treated \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.6em}
+\raggedright
+\tiny CSDID estimates are from Callaway and Sant'Anna style not-yet-treated comparisons. Event windows are shown only where later periods have control support.
+
+\end{frame}
+
+\begin{frame}{PPML Count Regressions}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{7pt}
+
+\begin{tabular}{lcc}
+\toprule
+& FE & Prov-year \\
+\midrule
+Post policy
+& -0.014 & -0.014 \\
+& (0.012) & (0.015) \\
+\midrule
+County FE & Yes & Yes \\
+Year FE & Yes & No \\
+Province-year FE & No & Yes \\
+Controls & Yes & Yes \\
+\midrule
+N & 16,947 & 16,929 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.6em}
+\raggedright
+\tiny PPML keeps zero-count observations. Unlike TWFE level-count estimates, PPML does not show a statistically significant count response.
+
+\end{frame}
+
+\begin{frame}{Chain vs Non-chain Outcomes}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabular}{lccc}
+\toprule
+& Chain count & Non-chain count & Chain share \\
+\midrule
+Post policy
+& 3.578$^{***}$ & 1.609 & 0.014$^{***}$ \\
+& (0.354) & (1.357) & (0.002) \\
+\midrule
+County FE & Yes & Yes & Yes \\
+Province-year FE & Yes & Yes & Yes \\
+Controls & Yes & Yes & Yes \\
+\midrule
+N & 16,961 & 16,961 & 16,961 \\
+R$^2$ & 0.724 & 0.858 & 0.747 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.6em}
+\raggedright
+\tiny The reform is associated with a larger increase in chain pharmacies and a higher chain share; the non-chain count effect is positive but imprecise.
+
+\end{frame}
+
+% ================= Distance mechanism =================
+
+\section{Distance to Hospitals}
+
+\begin{frame}{Pharmacy Distance to Nearest Hospital}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+& Mean km FE & Mean km prov-year & Share $\leq$2km FE & Share $\leq$2km prov-year \\
+\midrule
+Post policy
+& 0.000 & 0.100 & 0.001 & 0.001 \\
+& (0.124) & (0.155) & (0.005) & (0.006) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & No & Yes & No \\
+Province-year FE & No & Yes & No & Yes \\
+Controls & Yes & Yes & Yes & Yes \\
+\midrule
+N & 15,469 & 15,464 & 15,469 & 15,464 \\
+R$^2$ & 0.666 & 0.677 & 0.740 & 0.755 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.5em}
+\raggedright
+\tiny Outcome variables are county-year averages or shares based on each pharmacy's distance to its nearest hospital.
+
+\end{frame}
+
+\begin{frame}{Pharmacy Counts by Distance to Nearest Hospital}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+& $\leq$2km FE & $>$2km FE & $\leq$2km prov-year & $>$2km prov-year \\
+\midrule
+Post policy
+& 5.314$^{***}$ & 0.135 & 5.298$^{***}$ & -0.110 \\
+& (1.021) & (0.785) & (1.027) & (0.841) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & Yes & No & No \\
+Province-year FE & No & No & Yes & Yes \\
+Controls & Yes & Yes & Yes & Yes \\
+\midrule
+N & 16,961 & 16,961 & 16,961 & 16,961 \\
+R$^2$ & 0.849 & 0.763 & 0.867 & 0.803 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.5em}
+\raggedright
+\tiny The count increase is concentrated among pharmacies whose nearest hospital is within 2km; average distance and within-2km share are essentially unchanged.
+
+\end{frame}
+
+% ================= Event studies =================
+
+\section{Dynamic Diagnostics}
+
+\begin{frame}{TWFE Event-study Diagnostics}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.49\textwidth}
+\centering
+\countyimage{twfe_event_pharmacy_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\centering
+\countyimage{twfe_event_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny Standard TWFE event-study graphs; relative year $-1$ is omitted. Left: count. Right: log count.
+
+\end{frame}
+
+\begin{frame}{TWFE Event-study Diagnostics: Binned Version}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.49\textwidth}
+\centering
+\countyimage{twfe_event_binned_pharmacy_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\centering
+\countyimage{twfe_event_binned_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny Binned version uses $F5/F4/F3/F2/L0/L1/L2/L3$, matching the five-estimator robustness graph.
+
+\end{frame}
+
+\begin{frame}{CSDID Event-study Diagnostics}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.49\textwidth}
+\centering
+\countyimage{csdid_event_pharmacy_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\centering
+\countyimage{csdid_event_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny CSDID uses not-yet-treated counties as controls. Later post-periods without control support are not plotted.
+
+\end{frame}
+
+\begin{frame}{Five-estimator Event-study Robustness: Count}
+
+\centering
+\includegraphics[width=0.93\textwidth]{event_5estimators_count.png}
+
+\vspace{0.3em}
+\tiny Comparison of Sun-Abraham, Cengiz stacked event study, Borusyak-Jaravel-Spiess imputation, Callaway-Sant'Anna, and TWFE.
+
+\end{frame}
+
+\begin{frame}{Five-estimator Event-study Robustness: Log Count}
+
+\centering
+\includegraphics[width=0.93\textwidth]{event_5estimators_ln_count.png}
+
+\vspace{0.3em}
+\tiny Same five-estimator comparison for log pharmacy count.
+
+\end{frame}
+
+% ================= Synthesis =================
+
+\section{Synthesis}
+
+\begin{frame}{Summary of County-level Results}
+
+\scriptsize
+\begin{itemize}\setlength\itemsep{0.35em}
+    \item \textbf{TWFE count regressions are positive and stable.}
+    The preferred province-year specification implies roughly 5.2 additional pharmacies after reform.
+
+    \item \textbf{Log count estimates are small, while the extensive margin increases.}
+    Log-count coefficients are imprecise; the probability of having any pharmacy rises by 2.5--3.0 percentage points.
+
+    \item \textbf{Continuous DID suggests heterogeneity by baseline public-hospital intensity.}
+    Counties with more public hospitals have larger level-count increases, but lower log-count coefficients.
+
+    \item \textbf{CSDID and PPML are more muted.}
+    CSDID average ATT and PPML count regressions do not show statistically significant average effects.
+
+    \item \textbf{Distance results do not support a broad relocation away from hospitals.}
+    Average distance and within-2km share barely change; count increases are concentrated within 2km.
+
+    \item \textbf{Composition shifts toward chains.}
+    Chain pharmacy counts and chain share increase significantly; non-chain count changes are imprecise.
+\end{itemize}
+
+\end{frame}
+
+\end{document}

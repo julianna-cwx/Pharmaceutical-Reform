@@ -1,0 +1,574 @@
+\documentclass{beamer}
+
+\usepackage[UTF8]{ctex}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multirow}
+
+\usetheme{default}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\graphicspath{
+    {../hospital_with_pharmacy/integrated_results/hospital/}
+    {../hospital_with_pharmacy/integrated_results/county/}
+}
+
+\title{Pharmaceutical Reform and Pharmacy Entry}
+\subtitle{Model Results and Parallel-Trend Diagnostics}
+\author{Wenxia Chen}
+\date{June 12, 2026}
+
+\newcommand{\hospitalimage}[1]{%
+\IfFileExists{../hospital_with_pharmacy/integrated_results/hospital/#1}{%
+\includegraphics[width=\textwidth]{#1}%
+}{%
+\fbox{\parbox[c][0.48\textheight][c]{0.95\textwidth}{\centering \scriptsize Missing image:\\#1}}%
+}%
+}
+
+\begin{document}
+
+\frame{\titlepage}
+
+% ================= Hospital results =================
+
+\section{Hospital-level Results}
+
+\begin{frame}{Hospital DDD: Pharmacy Count}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{2}{c}{1km} & \multicolumn{2}{c}{2km} & \multicolumn{2}{c}{3km} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+& id+year & prov-year & id+year & prov-year & id+year & prov-year \\
+\midrule
+Public $\times$ Post
+& -0.403$^{*}$ & -0.343$^{*}$
+& -1.272$^{**}$ & -0.773
+& -2.148$^{*}$ & -0.819 \\
+& (0.192) & (0.158)
+& (0.491) & (0.403)
+& (0.856) & (0.724) \\
+\addlinespace
+Post policy
+& 1.081$^{***}$ & 
+& 4.171$^{***}$ &
+& 8.757$^{***}$ & \\
+& (0.148) &
+& (0.430) &
+& (0.814) & \\
+\midrule
+Hospital FE & Yes & Yes & Yes & Yes & Yes & Yes \\
+Year FE & Yes & No & Yes & No & Yes & No \\
+Province-year FE & No & Yes & No & Yes & No & Yes \\
+NTL control & Yes & Yes & Yes & Yes & Yes & Yes \\
+\midrule
+N & 164,674 & 164,663 & 164,674 & 164,663 & 164,674 & 164,663 \\
+R$^2$ & 0.895 & 0.906 & 0.906 & 0.918 & 0.911 & 0.922 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.4em}
+\raggedright
+\tiny Notes: Standard errors are clustered at the county level. $^{*}p<0.05$, $^{**}p<0.01$, $^{***}p<0.001$.
+
+\end{frame}
+
+\begin{frame}{Hospital Results Across Outcome Models}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccccccccc}
+\toprule
+& \multicolumn{3}{c}{Count OLS} & \multicolumn{3}{c}{ln(count+1)} & \multicolumn{3}{c}{ln(count)} & \multicolumn{3}{c}{PPML Count} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10} \cmidrule(lr){11-13}
+& 1km & 2km & 3km & 1km & 2km & 3km & 1km & 2km & 3km & 1km & 2km & 3km \\
+\midrule
+Public $\times$ Post
+& -0.343$^{*}$ & -0.773 & -0.819
+& -0.014 & -0.022 & -0.032
+& -0.014 & 0.010 & -0.002
+& -0.036$^{*}$ & -0.029$^{*}$ & -0.027$^{*}$ \\
+& (0.158) & (0.403) & (0.724)
+& (0.016) & (0.017) & (0.018)
+& (0.015) & (0.015) & (0.015)
+& (0.015) & (0.013) & (0.012) \\
+\midrule
+Hospital FE & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes \\
+Province-year FE & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes \\
+NTL control & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes \\
+\midrule
+N
+& 164,663 & 164,663 & 164,663
+& 164,663 & 164,663 & 164,663
+& 134,776 & 146,998 & 151,432
+& 147,711 & 156,544 & 159,753 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.5em}
+\raggedright
+\tiny Notes: OLS columns use hospital FE and province-year FE. PPML coefficients are semi-elasticity style estimates.
+
+\end{frame}
+
+\begin{frame}{Hospital TWFE Log Outcomes}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{2}{c}{1km} & \multicolumn{2}{c}{2km} & \multicolumn{2}{c}{3km} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+& id+year & prov-year & id+year & prov-year & id+year & prov-year \\
+\midrule
+ln(count+1)
+& -0.002 & -0.014 & -0.004 & -0.022 & -0.010 & -0.032 \\
+& (0.018) & (0.016) & (0.020) & (0.017) & (0.021) & (0.018) \\
+\addlinespace
+ln(count)
+& -0.005 & -0.014 & 0.025 & 0.010 & 0.018 & -0.002 \\
+& (0.017) & (0.015) & (0.017) & (0.015) & (0.017) & (0.015) \\
+\midrule
+Post policy & Yes & Yes & Yes & Yes & Yes & Yes \\
+Hospital FE & Yes & Yes & Yes & Yes & Yes & Yes \\
+NTL control & Yes & Yes & Yes & Yes & Yes & Yes \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.4em}
+\raggedright
+\tiny Entries are coefficients on Public $\times$ Post. Standard errors are clustered at the county level.
+
+\end{frame}
+
+\begin{frame}{Hospital CSDID Average ATT}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+
+\begin{tabular}{lccc}
+\toprule
+& 1km & 2km & 3km \\
+\midrule
+Count
+& -0.004 & -0.447 & -1.127 \\
+& (0.169) & (0.433) & (0.755) \\
+\addlinespace
+ln(count+1)
+& 0.013 & 0.013 & 0.008 \\
+& (0.017) & (0.018) & (0.019) \\
+\addlinespace
+ln(count)
+& -0.009 & 0.004 & -0.006 \\
+& (0.017) & (0.016) & (0.015) \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\raggedright
+\tiny CSDID uses public hospitals as treated in their local reform year and non-public hospitals as never treated. Controls include post-policy status and NTL.
+
+\end{frame}
+
+\begin{frame}{Hospital Extensive Margin}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{7pt}
+
+\begin{tabular}{lccc}
+\toprule
+& 1km & 2km & 3km \\
+\midrule
+Public $\times$ Post
+& -0.002 & -0.007 & -0.008 \\
+& (0.007) & (0.007) & (0.006) \\
+\addlinespace
+NTL
+& 0.037$^{***}$ & 0.052$^{***}$ & 0.058$^{***}$ \\
+& (0.006) & (0.007) & (0.008) \\
+\midrule
+Hospital FE & Yes & Yes & Yes \\
+Province-year FE & Yes & Yes & Yes \\
+N & 164,663 & 164,663 & 164,663 \\
+R$^2$ & 0.803 & 0.773 & 0.741 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\raggedright
+\tiny Outcome is an indicator for having at least one pharmacy within the distance band.
+
+\end{frame}
+
+\begin{frame}{Hospital TWFE Event Study: Count}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_count_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_count_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_count_3km.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny Event-time coefficients are interactions between public hospitals and relative reform years. Relative year -1 is omitted.
+
+\end{frame}
+
+\begin{frame}{Hospital TWFE Event Study: Count, Window -3 to +3}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_count_window_m3_p3_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_count_window_m3_p3_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_count_window_m3_p3_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital TWFE Event Study: ln(count+1)}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_ln1p_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_ln1p_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_ln1p_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital TWFE Event Study: ln(count)}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_ln_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_ln_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ddd_event_ln_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital CSDID Event Study: Count}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_count_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_count_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_count_3km.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny CSDID treats public hospitals in their local reform year and codes non-public hospitals as never treated.
+
+\end{frame}
+
+\begin{frame}{Hospital CSDID Event Study: Count, Window -3 to +3}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_count_window_m3_p3_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_count_window_m3_p3_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_count_window_m3_p3_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital CSDID Event Study: ln(count+1)}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_ln1p_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_ln1p_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_ln1p_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital CSDID Event Study: ln(count)}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_ln_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_ln_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{csdid_event_ln_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital PPML Event Study: Count}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ppml_event_count_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ppml_event_count_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ppml_event_count_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{Hospital PPML Event Study: Count, Window -3 to +3}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ppml_event_count_window_m3_p3_1km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ppml_event_count_window_m3_p3_2km.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\hospitalimage{ppml_event_count_window_m3_p3_3km.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% ================= County results =================
+
+\section{County-level Results}
+
+\begin{frame}{County TWFE DID: Pharmacy Count}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+
+\begin{tabular}{lcccc}
+\toprule
+& FE & + controls & + prov-year & 2012--2020 no road \\
+\midrule
+Post policy
+& 7.652$^{***}$ & 5.449$^{***}$ & 5.188$^{***}$ & 5.396$^{**}$ \\
+& (1.474) & (1.454) & (1.493) & (1.669) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes \\
+Year FE & Yes & Yes & No & No \\
+Province-year FE & No & No & Yes & Yes \\
+Controls & No & Yes & Yes & Yes \\
+\midrule
+N & 16,961 & 16,961 & 16,961 & 19,496 \\
+R$^2$ & 0.824 & 0.845 & 0.872 & 0.877 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.4em}
+\raggedright
+\tiny Controls include log population, log nighttime lights, and road density when available.
+
+\end{frame}
+
+\begin{frame}{County Results Across Outcome Models}
+
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccccc}
+\toprule
+& \multicolumn{2}{c}{Annual Change} & \multicolumn{2}{c}{Log Count} & \multicolumn{2}{c}{Has Pharmacy} & \multicolumn{2}{c}{PPML Count} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+& FE & prov-year & FE & prov-year & FE & prov-year & FE & prov-year \\
+\midrule
+Post policy
+& 19.892$^{***}$ & 19.090$^{***}$
+& 0.020 & 0.026
+& 0.030$^{***}$ & 0.025$^{***}$
+& -0.014 & -0.014 \\
+& (2.124) & (2.123)
+& (0.014) & (0.016)
+& (0.004) & (0.005)
+& (0.012) & (0.015) \\
+\midrule
+County FE & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes \\
+Province-year FE & No & Yes & No & Yes & No & Yes & No & Yes \\
+Controls & Yes & Yes & Yes & Yes & Yes & Yes & Yes & Yes \\
+\midrule
+N
+& 14,279 & 14,279
+& 15,469 & 15,464
+& 16,961 & 16,961
+& 16,947 & 16,929 \\
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.4em}
+\raggedright
+\tiny Outcome models use the controlled county sample. PPML keeps zero-count observations but yields coefficients on a different scale.
+
+\end{frame}
+
+\begin{frame}{County Parallel Trends: TWFE Event Study}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.32\textwidth}
+\centering
+\includegraphics[width=\textwidth]{twfe_event_pharmacy_count.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\includegraphics[width=\textwidth]{twfe_event_d_pharmacy_count.png}
+\end{column}
+\begin{column}{0.32\textwidth}
+\centering
+\includegraphics[width=\textwidth]{twfe_event_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny Panels show pharmacy count, annual change in pharmacy count, and log pharmacy count.
+
+\end{frame}
+
+\begin{frame}{County Parallel Trends: CSDID Event Study}
+
+\centering
+\begin{columns}[T]
+\begin{column}{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{csdid_event_pharmacy_count.png}
+\end{column}
+\begin{column}{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{csdid_event_ln_pharmacy.png}
+\end{column}
+\end{columns}
+
+\vspace{0.4em}
+\tiny CSDID uses not-yet-treated counties as controls.
+
+\end{frame}
+
+% ================= Synthesis =================
+
+\section{Synthesis}
+
+\begin{frame}{How the Results Connect}
+
+\scriptsize
+\begin{itemize}\setlength\itemsep{0.45em}
+    \item \textbf{Hospital-level level-count estimates are negative, but log estimates are close to zero.}
+    TWFE count and PPML estimates are negative for public hospitals after reform, while both $\ln(count+1)$ and $\ln(count)$ TWFE coefficients are small and statistically weak.
+
+    \item \textbf{Hospital CSDID results do not show a strong average effect.}
+    CSDID average ATT estimates are negative for count outcomes but imprecise; both log specifications are near zero across 1km, 2km, and 3km buffers.
+
+    \item \textbf{County-level TWFE estimates are positive in levels.}
+    Reform exposure is associated with higher county pharmacy counts and larger annual increases, with stable positive signs after adding controls and province-year fixed effects.
+
+    \item \textbf{Scale matters for interpretation.}
+    Hospital results compare public and non-public hospitals within local reform timing, while county results compare county-level pharmacy supply before and after reform adoption.
+
+    \item \textbf{Dynamic diagnostics remain the main caution.}
+    Count-outcome event studies are shown in both regular and $[-3,3]$ windows; log-outcome event studies are shown in the regular window only. Pre-period deviations should be reported as a limitation.
+
+    \item \textbf{Overall pattern.}
+    The reform coincides with broader county-level pharmacy expansion, but the hospital-level evidence does not support a clear relative increase in pharmacy entry around public hospitals.
+\end{itemize}
+
+\end{frame}
+
+\end{document}

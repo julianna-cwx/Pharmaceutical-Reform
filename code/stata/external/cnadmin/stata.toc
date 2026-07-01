@@ -1,0 +1,9 @@
+v 3
+d cnadmin: Matching Chinese Administrative Divisions Across Years
+d 
+d This repository provides the installation package for the cnadmin command.
+d It is a robust Stata utility designed to solve the "spatial polygon 
+d inconsistency" problem in Chinese empirical panel data by tracing 
+d historical administrative boundary changes.
+d 
+p cnadmin
