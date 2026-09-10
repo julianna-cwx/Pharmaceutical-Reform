@@ -1,1137 +1,1100 @@
 *===============================================================================
-* 02_county_all_regressions.do
-*
-* County-level staggered DID regressions
-*不去除policy_year=2012的
-*以政策年份的后一年为有效政策时点
+* 02_county_all_regressions_v2.do
+* Pharmacy is the main outcome.
+* Main mechanism outcomes split unique geocoded pharmacies into <=2km and >2km
+* from the nearest active public hospital in the same county.
+* Counts within 500m and 1km are distance-threshold robustness checks only.
+* Hospital-centered pharmacy sums and restaurant outcomes are excluded.
 
-* This file follows the CS_v5.do style:
-*   Part 0. Check required Stata packages.
-*   Part 1. Prepare county-level controls.
-*   Part 2. Merge pharmacy panel with controls and create variables.
-*   Part 3. Descriptive statistics and sample diagnostics.
-*   Part 4. Staggered TWFE DID.
-*   Part 4A. Annual changes in pharmacy outcomes.
-*   Part 4B. Distance from pharmacies to the nearest hospital.
-*   Part 4C. Continuous DID by public-hospital intensity.
-*   Part 5. PPML count regressions.
-*   Part 6. Chain vs non-chain outcomes.
-*   Part 7. TWFE event-study diagnostics.
-*   Part 8. CSDID robustness.
-*   Part 9. Five-estimator event-study robustness.
-*
+* All count logs are ln(count), without adding 1.
 *===============================================================================
-
+version 17
 clear all
 set more off
 set linesize 255
 
-global ROOT "D:\Hospital_Pharmacy program"
-global DATA "$ROOT\data\processed\hospital_pharmacy\county_pharmacy_panel"
-global OUTROOT "$ROOT\output\regression"
-global OUT "$OUTROOT\county_v2"
+capture mkdir "D:\Hospital_Pharmacy program\output\regression"
+capture mkdir "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid"
+capture log close _all
+log using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\02_county_all_regressions_v2.log", replace text
 
-capture mkdir "$OUTROOT"
-capture mkdir "$OUT"
-
-cap log close
-log using "$OUT\02_county_all_regressions.log", replace text
-
-*-------------------------------------------------------------------------------
-* Part 0. Required user-written commands
-*-------------------------------------------------------------------------------
-
-* These packages are used for high-dimensional FE regressions, table export,
-* coefficient plots, staggered DID, and PPML. If one is missing, the do-file
-* stops immediately so the error is easy to locate.
-foreach cmd in reghdfe ivreghdfe ivreg2 ranktest esttab eststo estpost ///
-    coefplot csdid ppmlhdfe eventstudyinteract event_plot stackedev ///
-    did_imputation {
-    capture which `cmd'
-    if _rc {
-        di as error "`cmd' is required. Install it before running this file."
-        if "`cmd'" == "did_imputation" {
-            di as error "Install Borusyak-Jaravel-Spiess with: ssc install did_imputation, replace"
-        }
-        exit 111
-    }
-}
-
-*-------------------------------------------------------------------------------
-* Part 1. Prepare county-level controls
-*-------------------------------------------------------------------------------
-
-tempfile controls
-
-* county_panel_1020.dta contains population, nighttime lights, and roads.
-* Its county code is pac19; we rename/round it into county_id for merging.
-use "$ROOT\data\processed\controls\county_panel_1020.dta", clear
-gen long county_id = round(pac19)
-replace year = round(year)
-
-keep county_id year province city county ///
-    pop pop_hukou pop_urban ///
-    nl_mean nl_sum ln_nl_mean ln_nl_sum ///
-    road_den road_den_intracity road_den_national ///
-    county_area county_area_sqm
-
-drop if missing(county_id) | missing(year)
-duplicates drop county_id year, force
+* Load the analysis-ready county panel
+use "D:\Hospital_Pharmacy program\data\hospital_pharmacy\county_pharm_panel\county_pharm_panel.dta", clear
 isid county_id year
-save `controls', replace
-
-*-------------------------------------------------------------------------------
-* Part 2. Merge pharmacy panel with controls and create variables
-*-------------------------------------------------------------------------------
-
-use "$DATA\county_pharmacy_panel_all_years.dta", clear
-isid county_id year
-
-* Optional distance outcomes created by coordinates_distance_v2.ipynb.
-* If the main county panel has not yet been regenerated, merge the standalone
-* distance panel so this do-file can still run after the new notebook cell.
-capture confirm variable mean_nearest_hospital_km
+capture confirm numeric variable county_id
 if _rc {
-    capture confirm file "$DATA\county_pharmacy_nearest_hospital_distance_all_years.dta"
-    if !_rc {
-        merge 1:1 county_id year using ///
-            "$DATA\county_pharmacy_nearest_hospital_distance_all_years.dta", ///
-            keep(master match) gen(merge_distance)
+    destring county_id, gen(county_id_num)
+}
+else {
+    gen long county_id_num = county_id
+}
+isid county_id_num year
 
-        preserve
-            contract year merge_distance
-            sort year merge_distance
-            export delimited using "$OUT\merge_distance_by_year.csv", replace
-        restore
-    }
+gen long prov_id = floor(county_id_num / 10000) if !missing(county_id_num)
+gen byte merge_policy = cond(missing(policy_year), 1, 3)
+gen int g_csdid = policy_year if !missing(policy_year) & policy_year >= 2012
+replace g_csdid = 0 if missing(policy_year)
+gen byte post_policy = (year >= policy_year) if !missing(policy_year)
+replace post_policy = 0 if missing(policy_year)
+
+gen int rel = year - policy_year if !missing(policy_year)
+gen byte sample_county = inrange(year, 2012, 2019) ///
+    & (missing(policy_year) | policy_year >= 2012) ///
+    & pharmacy_observed == 1 ///
+    & !missing(county_id_num, prov_id, ln_pop, ln_nl_mean, post_policy)
+
+confirm variable pharm_nearest_pub_total
+assert pharm_nearest_pub_total >= 0 if !missing(pharm_nearest_pub_total)
+
+foreach scope in le500m le1km le2km gt2km {
+    confirm variable pharm_nearest_pub_`scope'
+    assert pharm_nearest_pub_`scope' >= 0 ///
+        if !missing(pharm_nearest_pub_`scope')
 }
 
-merge 1:1 county_id year using `controls', keep(master match) gen(merge_controls)
+assert pharm_nearest_pub_le2km + pharm_nearest_pub_gt2km ///
+    == pharm_nearest_pub_total if !missing(pharm_nearest_pub_total)
+assert pharm_nearest_pub_le500m <= pharm_nearest_pub_le1km ///
+    if !missing(pharm_nearest_pub_le500m, pharm_nearest_pub_le1km)
+assert pharm_nearest_pub_le1km <= pharm_nearest_pub_le2km ///
+    if !missing(pharm_nearest_pub_le1km, pharm_nearest_pub_le2km)
 
-* Export merge diagnostics: this shows which years have matched controls.
+label variable pharm_nearest_pub_le500m "Unique pharmacies <=500m from nearest same-county public hospital"
+label variable pharm_nearest_pub_le1km "Unique pharmacies <=1km from nearest same-county public hospital"
+label variable pharm_nearest_pub_le2km "Unique pharmacies <=2km from nearest same-county public hospital"
+label variable pharm_nearest_pub_gt2km "Unique pharmacies >2km from all same-county public hospitals"
+label variable pharm_nearest_pub_total "Unique geocoded county pharmacies"
+
+
+gen byte ev_le_m4 = (rel <= -4) if !missing(rel)
+gen byte ev_m3 = (rel == -3) if !missing(rel)
+gen byte ev_m2 = (rel == -2) if !missing(rel)
+gen byte ev_0 = (rel == 0) if !missing(rel)
+gen byte ev_p1 = (rel == 1) if !missing(rel)
+gen byte ev_p2 = (rel == 2) if !missing(rel)
+gen byte ev_p3 = (rel == 3) if !missing(rel)
+gen byte ev_ge_p4 = (rel >= 4) if !missing(rel)
+
+replace ev_le_m4 = 0 if merge_policy == 1
+replace ev_m3 = 0 if merge_policy == 1
+replace ev_m2 = 0 if merge_policy == 1
+replace ev_0 = 0 if merge_policy == 1
+replace ev_p1 = 0 if merge_policy == 1
+replace ev_p2 = 0 if merge_policy == 1
+replace ev_p3 = 0 if merge_policy == 1
+replace ev_ge_p4 = 0 if merge_policy == 1
+
+quietly count if sample_county
+di as result "Main sample observations: " r(N)
+egen byte tag_sample_county = tag(county_id_num) if sample_county
+quietly count if tag_sample_county == 1
+di as result "Counties in main sample: " r(N)
+drop tag_sample_county
+
+global outdir "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid"
+
+
+****************************************************
+* 1. Descriptive statistics
+****************************************************
+
+gen double population_10000 = exp(ln_pop) / 10000 if !missing(ln_pop)
+
+label variable population_10000 ///
+    "County population (10,000 persons)"
+local descriptive_vars ///
+    county_pharmacy_count ///
+    ln_county_pharmacy_count ///
+    hospital_count ///
+    public_hospital_count ///
+    private_hospital_count ///
+    pharm_nearest_pub_total ///
+    pharm_nearest_pub_le500m ///
+    pharm_nearest_pub_le1km ///
+    pharm_nearest_pub_le2km ///
+    pharm_nearest_pub_gt2km ///
+    population_10000 ///
+    ln_pop ///
+    ln_nl_mean ///
+    policy_year
+
+* Store one complete set of descriptive statistics.
+estpost tabstat `descriptive_vars' if sample_county, ///
+    statistics(n mean sd min max) ///
+    columns(statistics)
+
+* Rename the posted count matrix so the RTF code reads "observations".
+tempname descriptive_observations
+matrix `descriptive_observations' = e(count)
+estadd matrix observations = `descriptive_observations'
+
+* Export RTF table
+esttab using "$outdir\county_pharmacy_descriptive_statistics2.rtf", ///
+    replace ///
+    cells("observations(fmt(%12.0fc)) mean(fmt(%12.3fc)) sd(fmt(%12.3fc)) min(fmt(%12.3fc)) max(fmt(%12.3fc))") ///
+    collabels("Observations" "Mean" "SD" "Min" "Max") ///
+    nonumber ///
+    noobs ///
+    nomtitle ///
+    title("Table 1. Descriptive Statistics") ///
+    label
+
+****************************************************
+* 2. Treatment-control trend comparison
+* Average total county pharmacy count by year
+****************************************************
+
 preserve
-    contract year merge_controls
-    sort year merge_controls
-    export delimited using "$OUT\merge_controls_by_year.csv", replace
+keep if sample_county
+gen byte ever_reformed = !missing(policy_year)
+
+collapse ///
+    (count) counties=county_pharmacy_count ///
+    (mean) average_pharmacy_count=county_pharmacy_count, ///
+    by(year ever_reformed)
+
+sort ever_reformed year
+
+label variable year "Year"
+label variable ever_reformed "Reform county"
+label variable counties "Counties"
+label variable average_pharmacy_count "Average pharmacy count"
+
+format year ever_reformed counties %12.0f
+format average_pharmacy_count %12.3f
+
+twoway ///
+    (connected average_pharmacy_count year if ever_reformed == 1, ///
+        lcolor(navy) mcolor(navy) msymbol(O) lwidth(medthick)) ///
+    (connected average_pharmacy_count year if ever_reformed == 0, ///
+        lcolor(maroon) mcolor(maroon) msymbol(T) ///
+        lpattern(dash) lwidth(medthick)), ///
+    xlabel(2012(1)2019) ///
+    ylabel(, angle(0) grid glcolor(gs14)) ///
+    xtitle("Year") ///
+    ytitle("Average total number of pharmacies") ///
+    title("Total pharmacy trends: treatment vs. control counties") ///
+    legend(order(1 "Treatment group" 2 "Control group") ///
+        rows(1) position(6)) ///
+    note("Treatment counties have a nonmissing policy year; control counties never reform.", ///
+        size(vsmall)) ///
+    graphregion(color(white)) plotregion(color(white)) ///
+    name(pharm_tc_trend, replace)
+
+graph export "$outdir\county_control_trend.png", ///
+    replace width(2400)
 restore
 
-* Merge cnadmin-crosswalked 1950s epidemiology-station IVs.
-capture confirm file "$DATA\epi_50s_iv_pac19_cnadmin.dta"
+*===============================================================================
+* Empirical specifications
+*===============================================================================
+
+* County main TWFE DID: pharmacy outcomes
+eststo clear
+eststo total_pharm_count: reghdfe county_pharmacy_count post_policy ln_pop ln_nl_mean if sample_county, absorb(county_id_num year) vce(cluster county_id_num)
+eststo total_pharm_ln: reghdfe ln_county_pharmacy_count post_policy ln_pop ln_nl_mean if sample_county, absorb(county_id_num year) vce(cluster county_id_num)
+esttab total_pharm_count total_pharm_ln using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\twfe_main_county_pharmacy.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(post_policy ln_pop ln_nl_mean) ///
+    mtitles("Pharmacy count" "ln pharmacy count") stats(N r2_within, labels("Observations" "Within R-squared")) ///
+    title("County TWFE main: county-wide pharmacy outcomes")
+
+eststo clear
+eststo total_pharm_count: reghdfe county_pharmacy_count post_policy  ln_pop ln_nl_mean if sample_county, absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+eststo total_pharm_ln: reghdfe ln_county_pharmacy_count post_policy ln_pop ln_nl_mean if sample_county, absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+esttab total_pharm_count total_pharm_ln using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\twfe_main_county_pharmacy2.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(post_policy ln_pop ln_nl_mean) ///
+    mtitles("Pharmacy count" "ln pharmacy count") stats(N r2_within, labels("Observations" "Within R-squared")) ///
+    title("County TWFE main: county-wide pharmacy outcomes")
+
+* County continuous DID IV: instrument baseline public-hospital intensity
+* with 1950s epidemiology-station exposure interacted with post-policy timing.
+capture confirm variable epi_cnt_1959
 if _rc {
-    di as error "Required IV file not found: $DATA\epi_50s_iv_pac19_cnadmin.dta"
-    di as error "Run dofile\build_epi_50s_iv_cnadmin.py before this regression file."
-    exit 111
+    di as error "epi_cnt_1959 is missing. Rerun county_pharm_panel.ipynb to merge the IV variables."
+    exit 459
 }
-merge m:1 county_id using "$DATA\epi_50s_iv_pac19_cnadmin.dta", ///
-    keep(master match) keepusing(epi_fnd_50s epi_cnt_1959 epi_yrs_50s ///
-        epi_any_50s ln_epi_cnt_1959_1p ln_epi_yrs_50s_1p ///
-        n_gb86_sources epi_iv_crosswalk_method) gen(merge_epi_50s_iv)
-
-preserve
-    contract year merge_epi_50s_iv
-    sort year merge_epi_50s_iv
-    export delimited using "$OUT\merge_epi_50s_iv_cnadmin_by_year.csv", replace
-restore
-
-replace policy_year = round(policy_year)
-replace year = round(year)
- //不去除政策年份为2012年的区县
-
-
-gen long prov_id = floor(county_id / 10000)
-gen long city_id = floor(county_id / 100)
-gen int t = year - 2011
-
-capture confirm variable public_hospital_count
+capture confirm variable epi_yrs_50s
 if _rc {
-    capture confirm variable hospital_公立
-    if !_rc {
-        gen public_hospital_count = hospital_公立
-    }
-    else {
-        di as error "Public hospital count variable is required but was not found."
-        exit 111
-    }
+    di as error "epi_yrs_50s is missing. Rerun county_pharm_panel.ipynb to merge the IV variables."
+    exit 459
 }
 
-* 2.1 Standard staggered DID variables.
-* Version v2 treats the reform as becoming effective in the year after policy_year.
-* Thus counties with policy_year == 2012 enter as effective-policy-year 2013 cohorts.
-gen int effective_policy_year = policy_year + 1 if !missing(policy_year)
-gen byte post_policy = (year >= effective_policy_year) ///
-    if !missing(year, effective_policy_year)
-gen byte did = post_policy
+bysort county_id_num: egen double public_hospital_base = max(cond(year == 2012, public_hospital_count, .))
+gen double ln_public_hospital_base = ln(public_hospital_base + 1) if !missing(public_hospital_base)
+gen double did_ln_public_hospital = post_policy * ln_public_hospital_base
+gen double z_did_epi_cnt_1959 = post_policy * epi_cnt_1959
+gen double z_did_epi_yrs_50s = post_policy * epi_yrs_50s
+gen byte sample_iv_county = sample_county ///
+    & !missing(county_pharmacy_count, ln_county_pharmacy_count, ln_pop, ln_nl_mean, ///
+        did_ln_public_hospital, z_did_epi_cnt_1959, z_did_epi_yrs_50s)
+label variable ln_public_hospital_base "ln baseline public hospitals, 2012 + 1"
+label variable did_ln_public_hospital "Post x ln baseline public hospitals"
+label variable z_did_epi_cnt_1959 "Post x 1959 epidemiology-station stock"
+label variable z_did_epi_yrs_50s "Post x 1950s epidemiology station-years"
 
-gen rel = year - effective_policy_year
-
-
-* 2.2 Outcomes.
-* pharmacy_count: county pharmacy stock/count.
-* ln_pharmacy: log count. Zero-count counties are set to missing.
-* ln_pharmacy_plus1: inverse-hyperbolic-style robustness that keeps zero-count
-* counties in the log specification by using ln(count + 1).
-* has_pharmacy: extensive margin.
-gen ln_pharmacy = ln(pharmacy_count)
-gen ln_pharmacy_plus1 = ln(pharmacy_count + 1)
-gen has_pharmacy = (pharmacy_count > 0) if !missing(pharmacy_count)
-
-sort county_id year
-by county_id: gen d_pharmacy_count = pharmacy_count - pharmacy_count[_n-1] ///
-    if year == year[_n-1] + 1
-by county_id: gen d_ln_pharmacy = ln_pharmacy - ln_pharmacy[_n-1] ///
-    if year == year[_n-1] + 1 & !missing(ln_pharmacy, ln_pharmacy[_n-1])
-
-gen nonchain_pharmacy_count = pharmacy_count - chain_pharmacy_count
-replace nonchain_pharmacy_count = . if nonchain_pharmacy_count < 0
-
-capture confirm variable pharmacy_within_2km
-if !_rc {
-    replace pharmacy_within_2km = 0 if missing(pharmacy_within_2km)
-    replace pharmacy_over_2km = 0 if missing(pharmacy_over_2km)
-    capture confirm variable share_pharmacy_within_2km
-    if _rc {
-        gen share_pharmacy_within_2km = ///
-            pharmacy_within_2km / (pharmacy_within_2km + pharmacy_over_2km)
-    }
-    replace share_pharmacy_within_2km = . ///
-        if pharmacy_within_2km + pharmacy_over_2km == 0
-}
-
-capture confirm variable pharmacy_2km_public_hosp
-if !_rc {
-    replace pharmacy_2km_public_hosp = 0 ///
-        if missing(pharmacy_2km_public_hosp)
-    capture confirm variable share_2km_public_hosp
-    if _rc {
-        gen share_2km_public_hosp = ///
-            pharmacy_2km_public_hosp / pharmacy_count
-    }
-    replace share_2km_public_hosp = . ///
-        if pharmacy_count == 0
-}
-
-capture confirm variable pharmacy_2km_private_hosp
-if !_rc {
-    replace pharmacy_2km_private_hosp = 0 ///
-        if missing(pharmacy_2km_private_hosp)
-    capture confirm variable share_2km_private_hosp
-    if _rc {
-        gen share_2km_private_hosp = ///
-            pharmacy_2km_private_hosp / pharmacy_count
-    }
-    replace share_2km_private_hosp = . ///
-        if pharmacy_count == 0
-}
-
-* 2.3 Controls.
-* Main controls: population, nighttime lights, and road density.
-gen ln_pop = ln(pop + 1)
-gen ln_road_den = ln(road_den + 1)
-
-sort county_id year
-by county_id: egen public_hospital_2012 = ///
-    max(cond(year == 2012, public_hospital_count, .))
-by county_id: gen public_hospital_base = public_hospital_2012
-by county_id: replace public_hospital_base = public_hospital_count[1] ///
-    if missing(public_hospital_base)
-gen ln_public_hospital_base = ln(public_hospital_base + 1)
-gen did_ln_public_hospital = post_policy * ln_public_hospital_base
-gen double z_epi_cnt_1959 = post_policy * epi_cnt_1959
-gen double z_epi_yrs_50s = post_policy * epi_yrs_50s
-
-label variable epi_cnt_1959 "Epidemiology stations in 1959, 1986-to-2019 crosswalk"
-label variable epi_yrs_50s "1950s epidemiology station-years, 1986-to-2019 crosswalk"
-label variable z_epi_cnt_1959 "Post x epidemiology stations in 1959"
-label variable z_epi_yrs_50s "Post x 1950s epidemiology station-years"
-
-
-global ctrl_road "ln_pop ln_nl_mean ln_road_den"
-global ctrl_noroad "ln_pop ln_nl_mean"
-
-* Road density is mostly usable through 2019, so sample_road ends in 2019.
-* Keep 2012 policy-year cohorts; with one-year delay they first become treated in 2013.
-gen byte sample_road = ///
-    inrange(year, 2012, 2019) & ///
-    effective_policy_year >= 2013 & ///
-    !missing(county_id, year, effective_policy_year, pharmacy_count, ///
-        ln_pop, ln_nl_mean, ln_road_den)
-
-gen byte sample_noroad = ///
-    inrange(year, 2012, 2020) & ///
-    effective_policy_year >= 2013 & ///
-    !missing(county_id, year, effective_policy_year, pharmacy_count, ///
-        ln_pop, ln_nl_mean)
-gen byte sample_contdid = ///
-    sample_road & !missing(post_policy, ln_public_hospital_base, ///
-        did_ln_public_hospital)
-gen byte sample_contdid_iv = sample_contdid & ///
-    !missing(epi_cnt_1959, epi_yrs_50s, z_epi_cnt_1959, z_epi_yrs_50s)
-
-gen byte sample_change = sample_road & !missing(d_pharmacy_count)
-gen byte sample_change_ln = sample_road & !missing(d_ln_pharmacy)
-
-* Robustness samples used to diagnose whether pre-trends are driven by limited
-* support in early/late cohorts or by unbalanced county histories.
-bysort county_id: egen n_sample_road = total(sample_road)
-gen byte sample_balanced = sample_road & n_sample_road == 8
-gen byte sample_midcohort = sample_road & ///
-    inrange(effective_policy_year, 2015, 2017)
-
-gen byte sample_dist_mean = sample_road
-capture confirm variable mean_nearest_hospital_km
-if !_rc {
-    replace sample_dist_mean = sample_road & !missing(mean_nearest_hospital_km)
-}
-
-gen byte sample_dist_bins = sample_road
-capture confirm variable pharmacy_within_2km
-if !_rc {
-    replace sample_dist_bins = sample_road & ///
-        !missing(pharmacy_within_2km, pharmacy_over_2km)
-}
-
-gen byte sample_dist_public = sample_road
-capture confirm variable mean_nearest_public_hosp_km
-if !_rc {
-    replace sample_dist_public = sample_road & ///
-        !missing(mean_nearest_public_hosp_km, ///
-            pharmacy_2km_public_hosp)
-}
-
-gen byte sample_dist_private = sample_road
-capture confirm variable mean_nearest_private_hosp_km
-if !_rc {
-    replace sample_dist_private = sample_road & ///
-        !missing(mean_nearest_private_hosp_km, ///
-            pharmacy_2km_private_hosp)
-}
-
-xtset county_id year
-
-*-------------------------------------------------------------------------------
-* Part 3. Descriptive statistics and sample diagnostics
-*-------------------------------------------------------------------------------
-
-* Raw cohort-level pre-trends. These are descriptive diagnostics analogous to
-* the event-study checks below, and help identify whether significant leads are
-* coming from particular treatment cohorts.
-preserve
-    keep if sample_road
-    collapse (mean) pharmacy_count ln_pharmacy_plus1 ///
-             (count) counties=county_id, by(effective_policy_year year)
-    export delimited using "$OUT\raw_pretrend_by_cohort_county.csv", replace
-
-    twoway ///
-        (line pharmacy_count year if effective_policy_year == 2015, ///
-            lcolor(navy) lwidth(medthick)) ///
-        (line pharmacy_count year if effective_policy_year == 2016, ///
-            lcolor(maroon) lwidth(medthick)) ///
-        (line pharmacy_count year if effective_policy_year == 2017, ///
-            lcolor(forest_green) lwidth(medthick)) ///
-        (line pharmacy_count year if effective_policy_year == 2018, ///
-            lcolor(orange) lwidth(medthick)), ///
-        legend(order(1 "2015 cohort" 2 "2016 cohort" ///
-                     3 "2017 cohort" 4 "2018 cohort") rows(1)) ///
-        title("Raw pre-trends by treatment cohort: pharmacy count") ///
-        xtitle("Year") ytitle("Mean pharmacy count") ///
-        graphregion(color(white)) plotregion(color(white)) bgcolor(white)
-    graph export "$OUT\raw_pretrend_by_cohort_count.png", replace width(2400)
-
-    twoway ///
-        (line ln_pharmacy_plus1 year if effective_policy_year == 2015, ///
-            lcolor(navy) lwidth(medthick)) ///
-        (line ln_pharmacy_plus1 year if effective_policy_year == 2016, ///
-            lcolor(maroon) lwidth(medthick)) ///
-        (line ln_pharmacy_plus1 year if effective_policy_year == 2017, ///
-            lcolor(forest_green) lwidth(medthick)) ///
-        (line ln_pharmacy_plus1 year if effective_policy_year == 2018, ///
-            lcolor(orange) lwidth(medthick)), ///
-        legend(order(1 "2015 cohort" 2 "2016 cohort" ///
-                     3 "2017 cohort" 4 "2018 cohort") rows(1)) ///
-        title("Raw pre-trends by treatment cohort: ln(count + 1)") ///
-        xtitle("Year") ytitle("Mean ln(pharmacy count + 1)") ///
-        graphregion(color(white)) plotregion(color(white)) bgcolor(white)
-    graph export "$OUT\raw_pretrend_by_cohort_ln_plus1.png", replace width(2400)
-restore
+quietly count if sample_iv_county
+di as result "County IV sample observations: " r(N)
 
 eststo clear
-estpost summarize pharmacy_count ln_pharmacy ln_pharmacy_plus1 has_pharmacy ///
-    d_pharmacy_count d_ln_pharmacy ///
-    chain_pharmacy_count nonchain_pharmacy_count ///
-    did ln_pop ln_nl_mean ln_road_den ///
-    sample_balanced sample_midcohort if sample_road, detail
-esttab using "$OUT\desc_county.rtf", replace ///
-    cells("count mean sd min p25 p50 p75 max") ///
-    noobs nomtitle nonumber ///
-    title("County-level descriptive statistics")
+eststo iv_stock_count: ivreghdfe county_pharmacy_count ln_pop ln_nl_mean ///
+    (did_ln_public_hospital = z_did_epi_cnt_1959) if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) cluster(county_id_num) first
+tempname kp_stock_count
+capture scalar `kp_stock_count' = e(widstat)
+if _rc estadd scalar kp_f = .
+else estadd scalar kp_f = `kp_stock_count'
 
-*-------------------------------------------------------------------------------
-* Part 4. Staggered TWFE DID: county reform timing
-*-------------------------------------------------------------------------------
+eststo iv_stock_ln: ivreghdfe ln_county_pharmacy_count ln_pop ln_nl_mean ///
+    (did_ln_public_hospital = z_did_epi_cnt_1959) if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) cluster(county_id_num) first
+tempname kp_stock_ln
+capture scalar `kp_stock_ln' = e(widstat)
+if _rc estadd scalar kp_f = .
+else estadd scalar kp_f = `kp_stock_ln'
 
-* Main county model:
-*   outcome_ct = beta * did_ct + controls_ct + county FE + year FE.
-*
-* Interpretation:
-*   county pharmacy supply after reform relative to before reform, using
-*   staggered reform timing across counties.
-eststo clear
-eststo c1: reghdfe pharmacy_count did if sample_road, ///
-    absorb(county_id year) cluster(county_id)
-eststo c2: reghdfe pharmacy_count did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
+eststo iv_years_count: ivreghdfe county_pharmacy_count ln_pop ln_nl_mean ///
+    (did_ln_public_hospital = z_did_epi_yrs_50s) if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) cluster(county_id_num) first
+tempname kp_years_count
+capture scalar `kp_years_count' = e(widstat)
+if _rc estadd scalar kp_f = .
+else estadd scalar kp_f = `kp_years_count'
 
-esttab c1 c2 using "$OUT\twfe_count_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N) nocons ///
-    keep(did ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("FE" "+ controls" "2012-2020 no road") ///
-    title("County staggered TWFE DID: pharmacy count")
+eststo iv_years_ln: ivreghdfe ln_county_pharmacy_count ln_pop ln_nl_mean ///
+    (did_ln_public_hospital = z_did_epi_yrs_50s) if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) cluster(county_id_num) first
+tempname kp_years_ln
+capture scalar `kp_years_ln' = e(widstat)
+if _rc estadd scalar kp_f = .
+else estadd scalar kp_f = `kp_years_ln'
 
-* Robustness checks motivated by the significant event-study leads:
-*   (i) exclude very early/late cohorts,
-*   (ii) use a balanced 2012-2019 panel,
-*   (iii) absorb province-by-year shocks.
-eststo clear
-eststo rb_c_mid: reghdfe pharmacy_count did $ctrl_road ///
-    if sample_midcohort, absorb(county_id year) cluster(county_id)
-eststo rb_l_mid: reghdfe ln_pharmacy_plus1 did $ctrl_road ///
-    if sample_midcohort, absorb(county_id year) cluster(county_id)
-eststo rb_c_bal: reghdfe pharmacy_count did $ctrl_road ///
-    if sample_balanced, absorb(county_id year) cluster(county_id)
-eststo rb_l_bal: reghdfe ln_pharmacy_plus1 did $ctrl_road ///
-    if sample_balanced, absorb(county_id year) cluster(county_id)
-eststo rb_c_py: reghdfe pharmacy_count did $ctrl_road ///
-    if sample_road, absorb(county_id prov_id#year) cluster(county_id)
-eststo rb_l_py: reghdfe ln_pharmacy_plus1 did $ctrl_road ///
-    if sample_road, absorb(county_id prov_id#year) cluster(county_id)
-
-esttab rb_c_mid rb_l_mid rb_c_bal rb_l_bal rb_c_py rb_l_py ///
-    using "$OUT\twfe_pretrend_robustness_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N) nocons ///
-    keep(did ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("count mid" "ln+1 mid" "count balanced" "ln+1 balanced" ///
-            "count prov-year" "ln+1 prov-year") ///
-    title("County TWFE robustness for pre-trend diagnostics")
-
-* Alternative outcomes: log count and extensive margin.
-eststo clear
-eststo lp1: reghdfe ln_pharmacy_plus1 did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
-eststo l1: reghdfe ln_pharmacy did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
-eststo h1: reghdfe has_pharmacy did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
-
-esttab lp1 l1 h1 using "$OUT\twfe_ln_has_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N) nocons ///
-    keep(did ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("ln(count+1) FE" "ln count FE" "has pharmacy FE") ///
-    title("County staggered TWFE DID: log and extensive margin")
-
-*-------------------------------------------------------------------------------
-* Part 4A. Annual changes in pharmacy outcomes
-*-------------------------------------------------------------------------------
-
-eststo clear
-eststo dc1: reghdfe d_pharmacy_count did $ctrl_road if sample_change, ///
-    absorb(county_id year) cluster(county_id)
-eststo dl1: reghdfe d_ln_pharmacy did $ctrl_road if sample_change_ln, ///
-    absorb(county_id year) cluster(county_id)
-
-esttab dc1 dl1 using "$OUT\twfe_change_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N) nocons ///
-    keep(did ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("d count FE" "d ln count FE") ///
-    title("County staggered TWFE DID: annual pharmacy changes")
-
-*-------------------------------------------------------------------------------
-* Part 4B. Distance from pharmacies to the nearest hospital
-*-------------------------------------------------------------------------------
-
-* These outcomes test whether pharmacies move closer to or farther from hospitals
-* after reform. Distances are pharmacy-level nearest-hospital distances averaged
-* to the county-year level; 2km bins mirror the common near/far split.
-capture confirm variable mean_nearest_hospital_km
-if !_rc {
-    eststo clear
-    eststo md1: reghdfe mean_nearest_hospital_km did $ctrl_road ///
-        if sample_dist_mean, absorb(county_id year) cluster(county_id)
-
-    esttab md1 using "$OUT\twfe_nearest_hospital_distance_county.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N) nocons ///
-        keep(did ln_pop ln_nl_mean ln_road_den) ///
-        mtitles("mean km FE") ///
-        title("County TWFE DID: pharmacy distance to nearest hospital")
-}
-
-capture confirm variable pharmacy_within_2km
-if !_rc {
-    eststo clear
-    eststo n1: reghdfe pharmacy_within_2km did $ctrl_road ///
-        if sample_dist_bins, absorb(county_id year) cluster(county_id)
-    eststo f1: reghdfe pharmacy_over_2km did $ctrl_road ///
-        if sample_dist_bins, absorb(county_id year) cluster(county_id)
-
-    esttab n1 f1 using "$OUT\twfe_distance_bins_county.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N) nocons ///
-        keep(did ln_pop ln_nl_mean ln_road_den) ///
-        mtitles("<=2km count FE" ">2km count FE") ///
-        title("County TWFE DID: pharmacy count by distance to nearest hospital")
-
-    eststo clear
-    eststo s1: reghdfe share_pharmacy_within_2km did $ctrl_road ///
-        if sample_dist_bins, absorb(county_id year) cluster(county_id)
-
-    esttab s1 using "$OUT\twfe_share_within_2km_county.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N) nocons ///
-        keep(did ln_pop ln_nl_mean ln_road_den) ///
-        mtitles("share FE") ///
-        title("County TWFE DID: share of pharmacies within 2km of nearest hospital")
-}
-
-capture confirm variable mean_nearest_public_hosp_km mean_nearest_private_hosp_km
-if !_rc {
-    eststo clear
-    eststo pd1: reghdfe mean_nearest_public_hosp_km did $ctrl_road ///
-        if sample_dist_public, absorb(county_id year) cluster(county_id)
-    eststo vd1: reghdfe mean_nearest_private_hosp_km did $ctrl_road ///
-        if sample_dist_private, absorb(county_id year) cluster(county_id)
-
-    esttab pd1 vd1 using "$OUT\twfe_public_private_hospital_distance_county.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N) nocons ///
-        keep(did ln_pop ln_nl_mean ln_road_den) ///
-        mtitles("public km FE" "private km FE") ///
-        title("County TWFE DID: pharmacy distance to nearest public/private hospital")
-}
-
-capture confirm variable pharmacy_2km_public_hosp pharmacy_2km_private_hosp ///
-    share_2km_public_hosp share_2km_private_hosp
-if !_rc {
-    eststo clear
-    eststo pc1: reghdfe pharmacy_2km_public_hosp did $ctrl_road ///
-        if sample_dist_public, absorb(county_id year) cluster(county_id)
-    eststo vc1: reghdfe pharmacy_2km_private_hosp did $ctrl_road ///
-        if sample_dist_private, absorb(county_id year) cluster(county_id)
-
-    esttab pc1 vc1 using "$OUT\twfe_public_private_2km_county.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N) nocons ///
-        keep(did ln_pop ln_nl_mean ln_road_den) ///
-        mtitles("public <=2km FE" "private <=2km FE") ///
-        title("County TWFE DID: pharmacies within 2km of public/private hospitals")
-
-    eststo clear
-    eststo ps1: reghdfe share_2km_public_hosp did $ctrl_road ///
-        if sample_dist_public, absorb(county_id year) cluster(county_id)
-    eststo vs1: reghdfe share_2km_private_hosp did $ctrl_road ///
-        if sample_dist_private, absorb(county_id year) cluster(county_id)
-
-    esttab ps1 vs1 using "$OUT\twfe_public_private_2km_share_county.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N) nocons ///
-        keep(did ln_pop ln_nl_mean ln_road_den) ///
-        mtitles("public share FE" "private share FE") ///
-        title("County TWFE DID: share of pharmacies within 2km of public/private hospitals")
-}
-
-*-------------------------------------------------------------------------------
-* Part 4C. Continuous DID by public-hospital intensity
-*-------------------------------------------------------------------------------
-
-* Treatment intensity is the county's baseline public-hospital stock:
-* ln(public hospitals in 2012 + 1). The interaction asks whether the post-reform
-* pharmacy response is larger in counties with more public hospitals ex ante.
-eststo clear
-eststo cd1: reghdfe pharmacy_count  did_ln_public_hospital ///
-    $ctrl_road if sample_contdid, ///
-    absorb(county_id year) cluster(county_id)
-eststo cd2: reghdfe ln_pharmacy  did_ln_public_hospital ///
-    $ctrl_road if sample_contdid, ///
-    absorb(county_id year) cluster(county_id)
-
-esttab cd1 cd2 using "$OUT\continuous_did_public_hospital_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N) nocons ///
-    keep(did_ln_public_hospital ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("count FE" "ln count FE") ///
-    title("County continuous DID by baseline public-hospital intensity")
-
-* IV version: the endogenous continuous DID term is instrumented by the
-* post-policy interaction with the county's 1950s epidemiology-station stock.
-eststo clear
-eststo iv_cd1: ivreghdfe pharmacy_count $ctrl_road ///
-    (did_ln_public_hospital = z_epi_cnt_1959) ///
-    if sample_contdid_iv, absorb(county_id year) cluster(county_id) first
-eststo iv_cd2: ivreghdfe ln_pharmacy $ctrl_road ///
-    (did_ln_public_hospital = z_epi_cnt_1959) ///
-    if sample_contdid_iv, absorb(county_id year) cluster(county_id) first
-eststo iv_cd3: ivreghdfe pharmacy_count $ctrl_road ///
-    (did_ln_public_hospital = z_epi_yrs_50s) ///
-    if sample_contdid_iv, absorb(county_id year) cluster(county_id) first
-eststo iv_cd4: ivreghdfe ln_pharmacy $ctrl_road ///
-    (did_ln_public_hospital = z_epi_yrs_50s) ///
-    if sample_contdid_iv, absorb(county_id year) cluster(county_id) first
-
-esttab iv_cd1 iv_cd2 iv_cd3 iv_cd4 ///
-    using "$OUT\continuous_did_public_hospital_iv_epi50s.rtf", replace ///
-    se b(%9.3fc) scalars(N widstat) nocons ///
-    keep(did_ln_public_hospital ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("count IV: 1959 stock" "ln count IV: 1959 stock" ///
-        "count IV: station-years" "ln count IV: station-years") ///
+esttab iv_stock_count iv_stock_ln iv_years_count iv_years_ln using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\iv_county_pharmacy_epi50s.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(did_ln_public_hospital ln_pop ln_nl_mean) ///
+    mtitles("Count: stock IV" "ln count: stock IV" "Count: station-years IV" "ln count: station-years IV") ///
+    stats(N kp_f, labels("Observations" "Kleibergen-Paap F")) ///
     title("County continuous DID IV: 1950s epidemiology-station instruments")
 
-*-------------------------------------------------------------------------------
-* Part 5. PPML count models
-*-------------------------------------------------------------------------------
+* Reduced-form event studies for the IV-DID parallel-trends assessment.
+* Event time -1 is omitted. Leads should be jointly zero under parallel trends
+* and no anticipation. These tests are diagnostics, not proof of exclusion.
+local iv_event_suffixes "le_m4 m3 m2 0 p1 p2 p3 ge_p4"
+local iv_event_dummies  "ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4"
 
-* PPML keeps zero pharmacy counts and is a natural robustness check for count
-* outcomes.
+local position = 1
+foreach suffix of local iv_event_suffixes {
+    local event_dummy : word `position' of `iv_event_dummies'
+    gen double rf_stock_`suffix' = `event_dummy' * epi_cnt_1959 ///
+        if sample_iv_county
+    gen double rf_years_`suffix' = `event_dummy' * epi_yrs_50s ///
+        if sample_iv_county
+    local position = `position' + 1
+}
+
+label variable rf_stock_le_m4 "<=-4 x 1959 epidemiology-station stock"
+label variable rf_stock_m3 "-3 x 1959 epidemiology-station stock"
+label variable rf_stock_m2 "-2 x 1959 epidemiology-station stock"
+label variable rf_stock_0 "0 x 1959 epidemiology-station stock"
+label variable rf_stock_p1 "1 x 1959 epidemiology-station stock"
+label variable rf_stock_p2 "2 x 1959 epidemiology-station stock"
+label variable rf_stock_p3 "3 x 1959 epidemiology-station stock"
+label variable rf_stock_ge_p4 ">=4 x 1959 epidemiology-station stock"
+
+label variable rf_years_le_m4 "<=-4 x 1950s epidemiology station-years"
+label variable rf_years_m3 "-3 x 1950s epidemiology station-years"
+label variable rf_years_m2 "-2 x 1950s epidemiology station-years"
+label variable rf_years_0 "0 x 1950s epidemiology station-years"
+label variable rf_years_p1 "1 x 1950s epidemiology station-years"
+label variable rf_years_p2 "2 x 1950s epidemiology station-years"
+label variable rf_years_p3 "3 x 1950s epidemiology station-years"
+label variable rf_years_ge_p4 ">=4 x 1950s epidemiology station-years"
+
+local rf_stock_vars ///
+    rf_stock_le_m4 rf_stock_m3 rf_stock_m2 rf_stock_0 ///
+    rf_stock_p1 rf_stock_p2 rf_stock_p3 rf_stock_ge_p4
+local rf_years_vars ///
+    rf_years_le_m4 rf_years_m3 rf_years_m2 rf_years_0 ///
+    rf_years_p1 rf_years_p2 rf_years_p3 rf_years_ge_p4
+
 eststo clear
-eststo pp1: ppmlhdfe pharmacy_count did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
+quietly reghdfe county_pharmacy_count `rf_stock_vars' ///
+    ln_pop ln_nl_mean if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test rf_stock_le_m4 rf_stock_m3 rf_stock_m2
+estadd scalar pretrend_p = r(p)
+eststo rf_stock_count
 
-esttab pp1 using "$OUT\ppml_count_county.rtf", replace ///
-    se b(%9.3fc) scalars(N) nocons ///
-    keep(did ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("FE") ///
-    title("County PPML: pharmacy count")
+quietly reghdfe ln_county_pharmacy_count `rf_stock_vars' ///
+    ln_pop ln_nl_mean if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test rf_stock_le_m4 rf_stock_m3 rf_stock_m2
+estadd scalar pretrend_p = r(p)
+eststo rf_stock_ln
 
-*-------------------------------------------------------------------------------
-* Part 6. Chain and non-chain outcomes
-*-------------------------------------------------------------------------------
+quietly reghdfe county_pharmacy_count `rf_years_vars' ///
+    ln_pop ln_nl_mean if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test rf_years_le_m4 rf_years_m3 rf_years_m2
+estadd scalar pretrend_p = r(p)
+eststo rf_years_count
 
-* Mechanism-style split:
-*   chain_pharmacy_count vs nonchain_pharmacy_count, plus chain_share.
+quietly reghdfe ln_county_pharmacy_count `rf_years_vars' ///
+    ln_pop ln_nl_mean if sample_iv_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test rf_years_le_m4 rf_years_m3 rf_years_m2
+estadd scalar pretrend_p = r(p)
+eststo rf_years_ln
+
+esttab rf_stock_count rf_stock_ln rf_years_count rf_years_ln using ///
+    "$outdir\iv_reduced_form_event_epi50s.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(`rf_stock_vars' `rf_years_vars') ///
+    mtitles("Count: stock exposure" "ln count: stock exposure" ///
+        "Count: station-years exposure" "ln count: station-years exposure") ///
+    stats(N pretrend_p, ///
+        labels("Observations" "Joint pretrend p-value")) ///
+    title("IV-DID Reduced-form Event Studies; Event Time -1 Omitted")
+
+coefplot rf_stock_count, keep(`rf_stock_vars') vertical ///
+    coeflabels(rf_stock_le_m4="<=-4" rf_stock_m3="-3" rf_stock_m2="-2" ///
+        rf_stock_0="0" rf_stock_p1="1" rf_stock_p2="2" ///
+        rf_stock_p3="3" rf_stock_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) ///
+    yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("Reduced form: pharmacy count, stock exposure") ///
+    xtitle("Years relative to reform; -1 omitted") ///
+    ytitle("Coefficient on event time x instrument exposure") ///
+    note("95% CIs; county-clustered SEs. Pretrend p-value reported in RTF table.", ///
+        size(vsmall)) ///
+    graphregion(color(white)) plotregion(color(white)) ///
+    name(rf_event_stock_count, replace)
+graph export "$outdir\iv_rf_event_stock_count.png", replace width(2400)
+
+coefplot rf_stock_ln, keep(`rf_stock_vars') vertical ///
+    coeflabels(rf_stock_le_m4="<=-4" rf_stock_m3="-3" rf_stock_m2="-2" ///
+        rf_stock_0="0" rf_stock_p1="1" rf_stock_p2="2" ///
+        rf_stock_p3="3" rf_stock_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) ///
+    yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("Reduced form: ln pharmacy count, stock exposure") ///
+    xtitle("Years relative to reform; -1 omitted") ///
+    ytitle("Coefficient on event time x instrument exposure") ///
+    note("95% CIs; county-clustered SEs. Pretrend p-value reported in RTF table.", ///
+        size(vsmall)) ///
+    graphregion(color(white)) plotregion(color(white)) ///
+    name(rf_event_stock_ln, replace)
+graph export "$outdir\iv_rf_event_stock_ln.png", replace width(2400)
+
+coefplot rf_years_count, keep(`rf_years_vars') vertical ///
+    coeflabels(rf_years_le_m4="<=-4" rf_years_m3="-3" rf_years_m2="-2" ///
+        rf_years_0="0" rf_years_p1="1" rf_years_p2="2" ///
+        rf_years_p3="3" rf_years_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) ///
+    yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("Reduced form: pharmacy count, station-years exposure") ///
+    xtitle("Years relative to reform; -1 omitted") ///
+    ytitle("Coefficient on event time x instrument exposure") ///
+    note("95% CIs; county-clustered SEs. Pretrend p-value reported in RTF table.", ///
+        size(vsmall)) ///
+    graphregion(color(white)) plotregion(color(white)) ///
+    name(rf_event_years_count, replace)
+graph export "$outdir\iv_rf_event_years_count.png", replace width(2400)
+
+coefplot rf_years_ln, keep(`rf_years_vars') vertical ///
+    coeflabels(rf_years_le_m4="<=-4" rf_years_m3="-3" rf_years_m2="-2" ///
+        rf_years_0="0" rf_years_p1="1" rf_years_p2="2" ///
+        rf_years_p3="3" rf_years_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) ///
+    yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("Reduced form: ln pharmacy count, station-years exposure") ///
+    xtitle("Years relative to reform; -1 omitted") ///
+    ytitle("Coefficient on event time x instrument exposure") ///
+    note("95% CIs; county-clustered SEs. Pretrend p-value reported in RTF table.", ///
+        size(vsmall)) ///
+    graphregion(color(white)) plotregion(color(white)) ///
+    name(rf_event_years_ln, replace)
+graph export "$outdir\iv_rf_event_years_ln.png", replace width(2400)
+
+* County mechanism TWFE: unique pharmacies within and beyond 2 km
 eststo clear
-eststo ch1: reghdfe chain_pharmacy_count did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
-eststo nch1: reghdfe nonchain_pharmacy_count did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
-eststo sh1: reghdfe chain_share did $ctrl_road if sample_road, ///
-    absorb(county_id year) cluster(county_id)
+eststo mech_pharm_le2km: reghdfe pharm_nearest_pub_le2km post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+eststo mech_pharm_gt2km: reghdfe pharm_nearest_pub_gt2km post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+esttab mech_pharm_le2km mech_pharm_gt2km using "$outdir\twfe_mechanism_pharmacy_2km.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(post_policy ln_pop ln_nl_mean) mtitles("<=2km" ">2km") ///
+    stats(N r2_within, labels("Observations" "Within R-squared")) ///
+    title("County TWFE mechanism: unique pharmacies by 2 km threshold")
 
-esttab ch1 nch1 sh1 using "$OUT\chain_nonchain_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N) nocons ///
-    keep(did ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("chain" "nonchain" "share") ///
-    title("County chain and non-chain pharmacy outcomes")
-
-*-------------------------------------------------------------------------------
-* Part 7. TWFE event-study diagnostics
-*-------------------------------------------------------------------------------
-
-* Event study uses rel = year - effective_policy_year.
-* rel = -1 is the omitted benchmark.
-* Pre-period coefficients are used to assess whether treated and comparison
-* counties had similar pre-trends.
-forvalues k = 2/4 {
-    capture drop ev_m`k'
-    gen byte ev_m`k' = (rel == -`k')
-}
-capture drop ev_0
-gen byte ev_0 = (rel == 0)
-forvalues k = 1/5 {
-    capture drop ev_p`k'
-    gen byte ev_p`k' = (rel == `k')
-}
-
-* TWFE event-study figures use the same binned event-time specification as the
-* five-estimator robustness plots: rel=-1 is omitted, rel<=-5 and rel>=3 are
-* pooled into the endpoints.
-capture drop F5event F4event F3event F2event L0event L1event L2event L3event
-gen byte F5event = (rel <= -5) if !missing(rel)
-gen byte F4event = (rel == -4) if !missing(rel)
-gen byte F3event = (rel == -3) if !missing(rel)
-gen byte F2event = (rel == -2) if !missing(rel)
-gen byte L0event = (rel == 0) if !missing(rel)
-gen byte L1event = (rel == 1) if !missing(rel)
-gen byte L2event = (rel == 2) if !missing(rel)
-gen byte L3event = (rel >= 3) if !missing(rel)
-foreach v in F5event F4event F3event F2event L0event L1event L2event L3event {
-    replace `v' = 0 if missing(`v')
-}
-
-foreach y in pharmacy_count ln_pharmacy {
-    reghdfe `y' F5event F4event F3event F2event L0event L1event L2event L3event ///
-        $ctrl_road if sample_road, absorb(county_id year) cluster(county_id)
-    capture noisily test F5event F4event F3event F2event
-    if _rc {
-        estadd scalar pretrend_p = .
-    }
-    else {
-        estadd scalar pretrend_p = r(p)
-    }
-    eststo twfe_event_`y'
-
-    coefplot twfe_event_`y', ///
-        keep(F5event F4event F3event F2event L0event L1event L2event L3event) ///
-        vertical ///
-        xlabel(1 "<= -5" 2 "-4" 3 "-3" 4 "-2" 5 "0" 6 "1" 7 "2" 8 ">= 3") ///
-        xline(4.5, lcolor(red) lpattern(dash)) ///
-        yline(0, lcolor(red)) ///
-        recast(scatter) ciopts(recast(rcap)) msize(small) ///
-        title("County TWFE event study: `y'") ///
-        xtitle("Years relative to reform") ytitle("Coefficient") ///
-        name(twfe_event_`y', replace)
-    graph export "$OUT\twfe_event_`y'.png", replace
-}
-
-esttab twfe_event_pharmacy_count twfe_event_ln_pharmacy ///
-    using "$OUT\twfe_event_stock_county.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N pretrend_p) nocons ///
-    keep(F5event F4event F3event F2event L0event L1event L2event L3event ///
-         ln_pop ln_nl_mean ln_road_den) ///
-    mtitles("pharmacy count" "ln pharmacy") ///
-    title("County TWFE event study: stock outcomes")
-
-* Continuous-DID event study. Each event-time indicator is interacted with the
-* county's baseline public-hospital intensity, ln(public hospitals in 2012 + 1).
-* Relative year -1 is omitted, matching the standard TWFE event-study above.
-capture drop cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5
-gen double cdev_m4 = ev_m4 * ln_public_hospital_base
-gen double cdev_m3 = ev_m3 * ln_public_hospital_base
-gen double cdev_m2 = ev_m2 * ln_public_hospital_base
-gen double cdev_0  = ev_0  * ln_public_hospital_base
-gen double cdev_p1 = ev_p1 * ln_public_hospital_base
-gen double cdev_p2 = ev_p2 * ln_public_hospital_base
-gen double cdev_p3 = ev_p3 * ln_public_hospital_base
-gen double cdev_p4 = ev_p4 * ln_public_hospital_base
-gen double cdev_p5 = ev_p5 * ln_public_hospital_base
-
-* IV event-study instruments. The time-invariant 1950s epidemiology-station
-* stock is interacted with the same event-time indicators as the endogenous
-* continuous-DID event terms.
-capture drop zcdev_m4 zcdev_m3 zcdev_m2 zcdev_0 zcdev_p1 zcdev_p2 zcdev_p3 zcdev_p4 zcdev_p5
-gen double zcdev_m4 = ev_m4 * epi_cnt_1959
-gen double zcdev_m3 = ev_m3 * epi_cnt_1959
-gen double zcdev_m2 = ev_m2 * epi_cnt_1959
-gen double zcdev_0  = ev_0  * epi_cnt_1959
-gen double zcdev_p1 = ev_p1 * epi_cnt_1959
-gen double zcdev_p2 = ev_p2 * epi_cnt_1959
-gen double zcdev_p3 = ev_p3 * epi_cnt_1959
-gen double zcdev_p4 = ev_p4 * epi_cnt_1959
-gen double zcdev_p5 = ev_p5 * epi_cnt_1959
-
-gen byte sample_contdid_event_iv = sample_contdid & ///
-    !missing(epi_cnt_1959, cdev_m4, cdev_m3, cdev_m2, cdev_0, ///
-        cdev_p1, cdev_p2, cdev_p3, cdev_p4, cdev_p5, ///
-        zcdev_m4, zcdev_m3, zcdev_m2, zcdev_0, zcdev_p1, ///
-        zcdev_p2, zcdev_p3, zcdev_p4, zcdev_p5)
-
-foreach y in pharmacy_count ln_pharmacy {
-    local ystub "`y'"
-    if "`y'" == "pharmacy_count" {
-        local ystub "count"
-    }
-    if "`y'" == "ln_pharmacy" {
-        local ystub "ln_count"
-    }
-
-    reghdfe `y' cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5 ///
-        $ctrl_road if sample_contdid, absorb(county_id year) cluster(county_id)
-    capture noisily test cdev_m4 cdev_m3 cdev_m2
-    if _rc {
-        estadd scalar pretrend_p = .
-    }
-    else {
-        estadd scalar pretrend_p = r(p)
-    }
-    eststo cdes_`ystub'
-
-    esttab cdes_`ystub' using "$OUT\continuous_did_event_`ystub'.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N pretrend_p) nocons ///
-        keep(cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5 ln_pop ln_nl_mean ln_road_den) ///
-        title("County continuous DID event study: `y'")
-
-    coefplot cdes_`ystub', ///
-        keep(cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5) ///
-        vertical ///
-        xlabel(1 "-4" 2 "-3" 3 "-2" 4 "0" 5 "1" 6 "2" 7 "3" 8 "4" 9 "5") ///
-        xline(4, lcolor(red) lpattern(dash)) ///
-        yline(0, lcolor(red)) ///
-        recast(scatter) ciopts(recast(rcap)) msize(small) ///
-        title("County continuous DID event study: `y'") ///
-        xtitle("Years relative to reform") ///
-        ytitle("Coefficient on baseline public-hospital intensity") ///
-        name(cdes_`ystub', replace)
-    graph export "$OUT\continuous_did_event_`ystub'.png", replace
-}
-
-foreach y in pharmacy_count ln_pharmacy {
-    local ystub "`y'"
-    if "`y'" == "pharmacy_count" {
-        local ystub "count"
-    }
-    if "`y'" == "ln_pharmacy" {
-        local ystub "ln_count"
-    }
-
-    ivreghdfe `y' $ctrl_road ///
-        (cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5 = ///
-         zcdev_m4 zcdev_m3 zcdev_m2 zcdev_0 zcdev_p1 zcdev_p2 zcdev_p3 zcdev_p4 zcdev_p5) ///
-        if sample_contdid_event_iv, absorb(county_id year) cluster(county_id)
-    capture noisily test cdev_m4 cdev_m3 cdev_m2
-    if _rc {
-        estadd scalar pretrend_p = .
-    }
-    else {
-        estadd scalar pretrend_p = r(p)
-    }
-    eststo iv_cdes_`ystub'
-
-    esttab iv_cdes_`ystub' using "$OUT\continuous_did_event_iv_`ystub'.rtf", replace ///
-        se b(%9.3fc) scalars(N widstat pretrend_p) nocons ///
-        keep(cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5 ///
-             ln_pop ln_nl_mean ln_road_den) ///
-        title("County IV continuous DID event study: `y'")
-
-    coefplot iv_cdes_`ystub', ///
-        keep(cdev_m4 cdev_m3 cdev_m2 cdev_0 cdev_p1 cdev_p2 cdev_p3 cdev_p4 cdev_p5) ///
-        vertical ///
-        xlabel(1 "-4" 2 "-3" 3 "-2" 4 "0" 5 "1" 6 "2" 7 "3" 8 "4" 9 "5") ///
-        xline(4, lcolor(red) lpattern(dash)) ///
-        yline(0, lcolor(red)) ///
-        recast(scatter) ciopts(recast(rcap)) msize(small) ///
-        title("County IV continuous DID event study: `y'") ///
-        xtitle("Years relative to reform") ///
-        ytitle("IV coefficient on baseline public-hospital intensity") ///
-        name(iv_cdes_`ystub', replace)
-    graph export "$OUT\continuous_did_event_iv_`ystub'.png", replace
-}
-
-* Annual-change event study. This uses the first-difference outcome from Part 4A
-* and the same omitted event year (-1) as the stock event-study graphs.
+* Distance-threshold robustness: unique pharmacies within 500 m and 1 km
 eststo clear
-reghdfe d_pharmacy_count ev_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_p4 ev_p5 ///
-    $ctrl_road if sample_change, absorb(county_id year) cluster(county_id)
-capture noisily test ev_m4 ev_m3 ev_m2
+eststo rob_pharm_le500m: reghdfe pharm_nearest_pub_le500m post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+eststo rob_pharm_le1km: reghdfe pharm_nearest_pub_le1km post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+esttab rob_pharm_le500m rob_pharm_le1km using "$outdir\twfe_mechanism_distance_robustness.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(post_policy ln_pop ln_nl_mean) mtitles("<=500m" "<=1km") ///
+    stats(N r2_within, labels("Observations" "Within R-squared")) ///
+    title("County TWFE robustness: alternative near-hospital thresholds")
+
+* County TWFE event studies: pharmacy outcomes only
+eststo clear
+eststo evt_total_pharm_count: reghdfe county_pharmacy_count ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 ln_pop ln_nl_mean if sample_county, absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test ev_le_m4 ev_m3 ev_m2
+estadd scalar pretrend_p = r(p)
+eststo evt_total_pharm_ln: reghdfe ln_county_pharmacy_count ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 ln_pop ln_nl_mean if sample_county, absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test ev_le_m4 ev_m3 ev_m2
+estadd scalar pretrend_p = r(p)
+esttab evt_total_pharm_count evt_total_pharm_ln using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\twfe_event_county_pharmacy.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) ///
+    mtitles("Pharmacy count" "ln pharmacy count") stats(N r2_within pretrend_p, labels("Observations" "Within R-squared" "Pretrend p-value")) ///
+    title("County TWFE event: county-wide pharmacy outcomes")
+
+coefplot evt_total_pharm_count, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+    coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("County TWFE event: pharmacy count") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") ///
+    graphregion(color(white)) plotregion(color(white)) name(evt_total_pharm_count, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\twfe_event_county_pharmacy_count.png", replace width(2200)
+
+
+coefplot evt_total_pharm_ln, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+    coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("County TWFE event: ln pharmacy count") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") ///
+    graphregion(color(white)) plotregion(color(white)) name(evt_total_pharm_ln, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\twfe_event_county_pharmacy_ln.png", replace width(2200)
+
+
+
+* County TWFE mechanism event studies: <=2km and >2km
+eststo clear
+eststo evt_mech_le2km: reghdfe pharm_nearest_pub_le2km ///
+    ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 ///
+    ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test ev_le_m4 ev_m3 ev_m2
+estadd scalar pretrend_p = r(p)
+coefplot evt_mech_le2km, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+    coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) ///
+    recast(scatter) ciopts(recast(rcap)) ///
+    title("County TWFE event: unique pharmacies <=2km") ///
+    xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") ///
+    graphregion(color(white)) plotregion(color(white)) name(evt_mech_le2km, replace)
+graph export "$outdir\twfe_event_mechanism_le2km.png", replace width(2200)
+
+eststo evt_mech_gt2km: reghdfe pharm_nearest_pub_gt2km ///
+    ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 ///
+    ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+test ev_le_m4 ev_m3 ev_m2
+estadd scalar pretrend_p = r(p)
+coefplot evt_mech_gt2km, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+    coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) ///
+    recast(scatter) ciopts(recast(rcap)) ///
+    title("County TWFE event: unique pharmacies >2km") ///
+    xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") ///
+    graphregion(color(white)) plotregion(color(white)) name(evt_mech_gt2km, replace)
+graph export "$outdir\twfe_event_mechanism_gt2km.png", replace width(2200)
+
+esttab evt_mech_le2km evt_mech_gt2km using "$outdir\twfe_event_mechanism_pharmacy_2km.rtf", replace ///
+    label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) ///
+    mtitles("<=2km" ">2km") ///
+    stats(N r2_within pretrend_p, labels("Observations" "Within R-squared" "Pretrend p-value")) ///
+    title("County TWFE event: unique pharmacies by 2 km threshold")
+
+*===============================================================================
+* PPMLHDFE: pharmacy counts
+* Retains zero-count observations and estimates proportional effects.
+* Fixed effects and clustering match the preferred county TWFE specification.
+*===============================================================================
+
+capture which ppmlhdfe
 if _rc {
-    estadd scalar pretrend_p = .
+    di as error "PPML regressions require ppmlhdfe."
+    di as error "Install it once with: ssc install ppmlhdfe"
+    exit 111
 }
-else {
+
+local ppml_event_vars ///
+    ev_le_m4 ev_m3 ev_m2 ///
+    ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4
+
+****************************************************
+* PPML main effects
+****************************************************
+
+* County-wide pharmacy count
+eststo clear
+eststo ppml_total_count: ppmlhdfe ///
+    county_pharmacy_count post_policy ln_pop ln_nl_mean ///
+    if sample_county, ///
+    absorb(county_id_num prov_id#year) ///
+    vce(cluster county_id_num)
+
+esttab ppml_total_count using ///
+    "$outdir\ppml_main_county_pharmacy_count.rtf", ///
+    replace label se b(%9.3f) ///
+    star(* 0.10 ** 0.05 *** 0.01) ///
+    nocons keep(post_policy ln_pop ln_nl_mean) ///
+    stats(N, labels("Observations")) ///
+    title("County PPMLHDFE: Total Pharmacy Count")
+
+* Mechanism outcomes: unique pharmacies within and beyond 2 km
+eststo clear
+eststo ppml_mech_le2km: ppmlhdfe ///
+    pharm_nearest_pub_le2km post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+eststo ppml_mech_gt2km: ppmlhdfe ///
+    pharm_nearest_pub_gt2km post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+esttab ppml_mech_le2km ppml_mech_gt2km using ///
+    "$outdir\ppml_mechanism_pharmacy_2km.rtf", ///
+    replace label se b(%9.3f) ///
+    star(* 0.10 ** 0.05 *** 0.01) ///
+    nocons keep(post_policy ln_pop ln_nl_mean) ///
+    mtitles("<=2km" ">2km") ///
+    stats(N, labels("Observations")) ///
+    title("County PPMLHDFE mechanism: unique pharmacies by 2 km threshold")
+
+* Distance-threshold robustness: within 500 m and 1 km
+eststo clear
+eststo ppml_rob_le500m: ppmlhdfe ///
+    pharm_nearest_pub_le500m post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+eststo ppml_rob_le1km: ppmlhdfe ///
+    pharm_nearest_pub_le1km post_policy ln_pop ln_nl_mean if sample_county, ///
+    absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+esttab ppml_rob_le500m ppml_rob_le1km using ///
+    "$outdir\ppml_mechanism_distance_robustness.rtf", ///
+    replace label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) ///
+    nocons keep(post_policy ln_pop ln_nl_mean) mtitles("<=500m" "<=1km") ///
+    stats(N, labels("Observations")) ///
+    title("County PPMLHDFE robustness: alternative near-hospital thresholds")
+
+****************************************************
+* PPML event studies
+* Event time -1 is the omitted reference period.
+****************************************************
+
+* County-wide pharmacy count
+eststo clear
+eststo ppml_evt_total_count: ppmlhdfe ///
+    county_pharmacy_count `ppml_event_vars' ln_pop ln_nl_mean ///
+    if sample_county, ///
+    absorb(county_id_num prov_id#year) ///
+    vce(cluster county_id_num)
+
+capture noisily test ev_le_m4 ev_m3 ev_m2
+if !_rc {
     estadd scalar pretrend_p = r(p)
 }
-eststo twfe_event_d_pharmacy_count
-
-esttab twfe_event_d_pharmacy_count using "$OUT\twfe_event_d_pharmacy_count.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N pretrend_p) nocons ///
-    keep(ev_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_p4 ev_p5 ln_pop ln_nl_mean ln_road_den) ///
-    title("County TWFE event study: annual change in pharmacy count")
-
-coefplot twfe_event_d_pharmacy_count, ///
-    keep(ev_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_p4 ev_p5) ///
-    vertical ///
-    xlabel(1 "-4" 2 "-3" 3 "-2" 4 "0" 5 "1" 6 "2" 7 "3" 8 "4" 9 "5") ///
-    xline(4, lcolor(red) lpattern(dash)) ///
-    yline(0, lcolor(red)) ///
-    recast(scatter) ciopts(recast(rcap)) msize(small) ///
-    title("County TWFE event study: annual change in count") ///
-    xtitle("Years relative to reform") ytitle("Coefficient") ///
-    name(twfe_event_d_pharmacy_count, replace)
-graph export "$OUT\twfe_event_d_pharmacy_count.png", replace
-* Binned TWFE event study, window [-3,+3]. The tails are pooled into
-* <= -3 and >= +3, while rel = -1 remains the omitted benchmark.
-capture drop bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3
-gen byte bin_m3 = (rel <= -3) if !missing(rel)
-gen byte bin_m2 = (rel == -2) if !missing(rel)
-gen byte bin_0  = (rel == 0)  if !missing(rel)
-gen byte bin_p1 = (rel == 1)  if !missing(rel)
-gen byte bin_p2 = (rel == 2)  if !missing(rel)
-gen byte bin_p3 = (rel >= 3)  if !missing(rel)
-foreach v in bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3 {
-    replace `v' = 0 if missing(`v')
-}
-
-foreach y in pharmacy_count ln_pharmacy {
-    local ystub "`y'"
-    if "`y'" == "pharmacy_count" {
-        local ystub "count"
-    }
-    if "`y'" == "ln_pharmacy" {
-        local ystub "ln_count"
-    }
-
-    reghdfe `y' bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3 ///
-        $ctrl_road if sample_road, absorb(county_id year) cluster(county_id)
-    capture noisily test bin_m3 bin_m2
-    if _rc {
-        estadd scalar pretrend_p = .
-    }
-    else {
-        estadd scalar pretrend_p = r(p)
-    }
-    eststo twfeb_m3p3_`ystub'
-
-    esttab twfeb_m3p3_`ystub' using "$OUT\twfe_event_binned_m3p3_`ystub'.rtf", replace ///
-        se b(%9.3fc) r2 scalars(N pretrend_p) nocons ///
-        keep(bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3 ln_pop ln_nl_mean ln_road_den) ///
-        title("County binned TWFE event study [-3,+3]: `y'")
-
-    coefplot twfeb_m3p3_`ystub', ///
-        keep(bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3) ///
-        vertical ///
-        xlabel(1 "<= -3" 2 "-2" 3 "0" 4 "1" 5 "2" 6 ">= 3") ///
-        xline(2.5, lcolor(red) lpattern(dash)) ///
-        yline(0, lcolor(red)) ///
-        recast(scatter) ciopts(recast(rcap)) msize(small) ///
-        title("County binned TWFE event study [-3,+3]: `y'") ///
-        xtitle("Years relative to reform") ytitle("Coefficient") ///
-        name(twfeb_m3p3_`ystub', replace)
-    graph export "$OUT\twfe_event_binned_m3p3_`ystub'.png", replace
-}
-
-eststo clear
-reghdfe d_pharmacy_count bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3 ///
-    $ctrl_road if sample_change, absorb(county_id year) cluster(county_id)
-capture noisily test bin_m3 bin_m2
-if _rc {
+else {
     estadd scalar pretrend_p = .
 }
-else {
-    estadd scalar pretrend_p = r(p)
-}
-eststo twfeb_m3p3_d_pharmacy_count
 
-esttab twfeb_m3p3_d_pharmacy_count using "$OUT\twfe_event_binned_m3p3_d_pharmacy_count.rtf", replace ///
-    se b(%9.3fc) r2 scalars(N pretrend_p) nocons ///
-    keep(bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3 ln_pop ln_nl_mean ln_road_den) ///
-    title("County binned TWFE event study [-3,+3]: annual change in pharmacy count")
+esttab ppml_evt_total_count using ///
+    "$outdir\ppml_event_county_pharmacy_count.rtf", ///
+    replace label se b(%9.3f) ///
+    star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(`ppml_event_vars', relax) ///
+    stats(N pretrend_p, ///
+        labels("Observations" "Pretrend p-value")) ///
+    title("County PPMLHDFE Event Study: Total Pharmacy Count")
 
-coefplot twfeb_m3p3_d_pharmacy_count, ///
-    keep(bin_m3 bin_m2 bin_0 bin_p1 bin_p2 bin_p3) ///
-    vertical ///
-    xlabel(1 "<= -3" 2 "-2" 3 "0" 4 "1" 5 "2" 6 ">= 3") ///
-    xline(2.5, lcolor(red) lpattern(dash)) ///
-    yline(0, lcolor(red)) ///
-    recast(scatter) ciopts(recast(rcap)) msize(small) ///
-    title("County binned TWFE event study [-3,+3]: annual change in count") ///
-    xtitle("Years relative to reform") ytitle("Coefficient") ///
-    name(twfeb_m3p3_d_pharmacy_count, replace)
-graph export "$OUT\twfe_event_binned_m3p3_d_pharmacy_count.png", replace
+coefplot ppml_evt_total_count, ///
+    keep(`ppml_event_vars') vertical ///
+    coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ///
+        ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) ///
+    yline(0, lcolor(gs8)) recast(scatter) ///
+    ciopts(recast(rcap)) ///
+    title("County PPMLHDFE event: total pharmacy count") ///
+    xtitle("Years relative to reform; -1 omitted") ///
+    ytitle("Coefficient") ///
+    graphregion(color(white)) plotregion(color(white)) ///
+    name(ppml_evt_total_count, replace)
 
+graph export ///
+    "$outdir\ppml_event_county_pharmacy_count.png", ///
+    replace width(2200)
 
+* Mechanism outcomes: unique pharmacies within and beyond 2 km
+eststo clear
+foreach side in le2km gt2km {
+    eststo ppml_evt_`side': ppmlhdfe ///
+        pharm_nearest_pub_`side' ///
+        `ppml_event_vars' ln_pop ln_nl_mean if sample_county, ///
+        absorb(county_id_num prov_id#year) ///
+        vce(cluster county_id_num)
 
-*-------------------------------------------------------------------------------
-* Part 8. CSDID robustness
-*-------------------------------------------------------------------------------
-
-* CSDID is a staggered-DID robustness check. notyet uses not-yet-treated
-* counties as controls.
-foreach y in pharmacy_count ln_pharmacy {
-    csdid `y' $ctrl_road if sample_road, ///
-        ivar(county_id) time(year) gvar(effective_policy_year) ///
-        method(dripw) vce(cluster county_id) notyet
-    estat simple
-    estat event, window(-5 3) drop(Tm1) estore(cs_`y')
-    capture noisily estat pretrend
-
-    event_plot cs_`y', ///
-        stub_lag(Tp#) stub_lead(Tm#) ///
-        trimlag(3) trimlead(5) together plottype(scatter) ciplottype(rcap) ///
-        lag_opt(msymbol(X) mcolor(orange) color(orange) msize(small)) ///
-        lag_ci_opt(color(orange%45) lwidth(thin)) ///
-        graph_opt( ///
-            title("County CSDID event study: `y'") ///
-            xtitle("Years relative to reform") ///
-            ytitle("ATT") ///
-            xlabel(-5(1)3) ///
-            xline(-0.5, lcolor(red) lpattern(dash)) ///
-            yline(0, lcolor(red)) ///
-            name(cs_`y', replace) ///
-            graphregion(color(white)) plotregion(color(white)) bgcolor(white) ///
-        )
-    graph export "$OUT\csdid_event_`y'.png", replace
-}
-
-* CSDID event study for annual pharmacy-count changes.
-capture noisily csdid d_pharmacy_count $ctrl_road if sample_change, ///
-    ivar(county_id) time(year) gvar(effective_policy_year) ///
-    method(dripw) vce(cluster county_id) notyet
-if _rc {
-    di as error "CSDID annual-change event study failed; continuing without csdid_event_d_pharmacy_count.png."
-}
-else {
-    estat simple
-    estat event, window(-5 3) drop(Tm1) estore(cs_d_pharmacy_count)
-    capture noisily estat pretrend
-
-    event_plot cs_d_pharmacy_count, ///
-        stub_lag(Tp#) stub_lead(Tm#) ///
-        trimlag(3) trimlead(5) together plottype(scatter) ciplottype(rcap) ///
-        lag_opt(msymbol(X) mcolor(orange) color(orange) msize(small)) ///
-        lag_ci_opt(color(orange%45) lwidth(thin)) ///
-        graph_opt( ///
-            title("County CSDID event study: annual change in count") ///
-            xtitle("Years relative to reform") ///
-            ytitle("ATT") ///
-            xlabel(-5(1)3) ///
-            xline(-0.5, lcolor(red) lpattern(dash)) ///
-            yline(0, lcolor(red)) ///
-            name(cs_d_pharmacy_count, replace) ///
-            graphregion(color(white)) plotregion(color(white)) bgcolor(white) ///
-        )
-    graph export "$OUT\csdid_event_d_pharmacy_count.png", replace
-}
-
-*-------------------------------------------------------------------------------
-* Part 9. Five-estimator event-study robustness
-*-------------------------------------------------------------------------------
-
-* This figure follows the comparison 
-* Sun-Abraham, Cengiz stacked event study,
-* Borusyak-Jaravel-Spiess imputation, Callaway-Sant'Anna, and TWFE.
-* County-level reforms are all eventually treated in this sample. For estimators
-* that need clean controls, the last-treated counties are used as controls and
-* observations at/after the last-treated cohort's treatment year are excluded.
-*
-* Relative periods earlier than -5 and later than +3 are binned into -5 and +3.
-* Period -1 is the omitted benchmark for the dummy-based estimators.
-summ effective_policy_year if sample_road, meanonly
-local last_policy_year = r(max)
-
-capture drop F5event F4event F3event F2event L0event L1event L2event L3event
-gen byte F5event = (rel <= -5) if !missing(rel)
-gen byte F4event = (rel == -4) if !missing(rel)
-gen byte F3event = (rel == -3) if !missing(rel)
-gen byte F2event = (rel == -2) if !missing(rel)
-gen byte L0event = (rel == 0) if !missing(rel)
-gen byte L1event = (rel == 1) if !missing(rel)
-gen byte L2event = (rel == 2) if !missing(rel)
-gen byte L3event = (rel >= 3) if !missing(rel)
-foreach v in F5event F4event F3event F2event L0event L1event L2event L3event {
-    replace `v' = 0 if missing(`v')
-}
-
-capture drop last_treat_control sa_cohort stack_cohort
-gen byte last_treat_control = (effective_policy_year == `last_policy_year') if sample_road
-gen int sa_cohort = effective_policy_year
-gen int stack_cohort = effective_policy_year
-replace stack_cohort = . if last_treat_control == 1
-
-foreach v in F5event F4event F3event F2event L0event L1event L2event L3event {
-    capture drop sa_`v' st_`v'
-    gen byte sa_`v' = `v'
-    gen byte st_`v' = `v'
-    replace sa_`v' = 0 if last_treat_control == 1
-    replace st_`v' = 0 if last_treat_control == 1
-}
-
-preserve
-    keep if sample_road
-    gen rel_5_3 = rel
-    replace rel_5_3 = -5 if rel_5_3 < -5
-    replace rel_5_3 = 3 if rel_5_3 > 3
-    contract effective_policy_year rel_5_3
-    sort effective_policy_year rel_5_3
-    export delimited using "$OUT\event_5estimators_support_county.csv", replace
-restore
-
-tempfile fiveest_base_panel
-save `fiveest_base_panel', replace
-
-foreach y in pharmacy_count ln_pharmacy {
-    use `fiveest_base_panel', clear
-
-    local ystub "`y'"
-    local ytitle "ATT"
-    if "`y'" == "pharmacy_count" {
-        local ystub "count"
-        local ytitle "ATT on pharmacy count"
+    capture noisily test ev_le_m4 ev_m3 ev_m2
+    if !_rc {
+        estadd scalar pretrend_p = r(p)
     }
-    if "`y'" == "ln_pharmacy" {
-        local ystub "ln_count"
-        local ytitle "ATT on ln pharmacy count"
+    else {
+        estadd scalar pretrend_p = .
     }
 
-    * Borusyak, Jaravel, and Spiess (2021): imputation estimator.
-    * The SE weight iteration can be slow in this county panel. First try
-    * stricter iteration settings; if SE convergence still fails, keep the
-    * BJS point estimates with nose so the robustness figure is still produced.
-    capture noisily did_imputation `y' county_id year effective_policy_year if sample_road, ///
-        horizons(0/3) pretrend(5) autosample ///
-        controls($ctrl_road) cluster(county_id) tol(0.0001) maxit(10000)
-    if _rc {
-        di as error "BJS standard errors did not converge for `y'; rerunning with nose."
-        did_imputation `y' county_id year effective_policy_year if sample_road, ///
-            horizons(0/3) pretrend(5) autosample ///
-            controls($ctrl_road) cluster(county_id) nose
+    coefplot ppml_evt_`side', ///
+        keep(`ppml_event_vars') vertical ///
+        coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ///
+            ev_0="0" ev_p1="1" ev_p2="2" ///
+            ev_p3="3" ev_ge_p4=">=4") ///
+        xline(3.5, lcolor(red) lpattern(dash)) ///
+        yline(0, lcolor(gs8)) recast(scatter) ///
+        ciopts(recast(rcap)) ///
+        title("County PPMLHDFE event: pharmacies `side'") ///
+        xtitle("Years relative to reform; -1 omitted") ///
+        ytitle("Coefficient") ///
+        graphregion(color(white)) plotregion(color(white)) ///
+        name(ppml_evt_`side', replace)
+
+    graph export ///
+        "$outdir\ppml_event_mechanism_`side'.png", ///
+        replace width(2000)
+}
+
+esttab ///
+    ppml_evt_le2km ppml_evt_gt2km using ///
+    "$outdir\ppml_event_mechanism_pharmacy_2km.rtf", ///
+    replace label se b(%9.3f) ///
+    star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(`ppml_event_vars', relax) ///
+    mtitles("<=2km" ">2km") ///
+    stats(N pretrend_p, ///
+        labels("Observations" "Pretrend p-value")) ///
+    title("County PPMLHDFE event: unique pharmacies by 2 km threshold")
+
+* County-wide CSDID: pharmacy outcomes only
+eststo clear
+csdid county_pharmacy_count ln_pop ln_nl_mean if sample_county, ivar(county_id_num) time(year) gvar(g_csdid) method(dripw) notyet vce(cluster county_id_num)
+capture noisily estat pretrend
+estat simple, estore(cst_pharm_count)
+
+estat event, window(-4 4) estore(cse_total_pharm_count)
+
+csdid ln_county_pharmacy_count ln_pop ln_nl_mean if sample_county, ivar(county_id_num) time(year) gvar(g_csdid) method(dripw) notyet vce(cluster county_id_num)
+capture noisily estat pretrend
+estat simple, estore(cst_pharm_ln)
+
+estat event, window(-4 4) estore(cse_total_pharm_ln)
+esttab cst_pharm_count cst_pharm_ln using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\csdid_att_county_pharmacy.rtf", replace ///
+    se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ATT) mtitles("Pharmacy count" "ln pharmacy count") ///
+    title("County CSDID ATT: county-wide pharmacy outcomes")
+esttab cse_total_pharm_count cse_total_pharm_ln using "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\csdid_event_county_pharmacy.rtf", replace ///
+    se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4, relax) ///
+    mtitles("Pharmacy count" "ln pharmacy count") ///
+    title("County CSDID event: county-wide pharmacy outcomes")
+
+coefplot cse_total_pharm_count, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+    coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("County CSDID event: pharmacy count") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") ///
+    graphregion(color(white)) plotregion(color(white)) name(cse_county_pharm_count, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\csdid_event_county_pharmacy_count.png", replace width(2200)
+
+coefplot cse_total_pharm_ln, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+    coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+    title("County CSDID event: ln pharmacy count") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") ///
+    graphregion(color(white)) plotregion(color(white)) name(cse_county_pharm_ln, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\csdid_event_county_pharmacy_ln.png", replace width(2200)
+
+graph combine cse_county_pharm_count cse_county_pharm_ln, cols(2) imargin(tiny) ///
+    title("County-wide pharmacy outcomes: CSDID event studies") ///
+    graphregion(color(white)) name(csdid_evt_county_combined, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\csdid_event_county_pharmacy_combined.png", replace width(3200)
+
+* County CSDID mechanism: unique pharmacies within and beyond 2 km
+eststo clear
+csdid pharm_nearest_pub_le2km ln_pop ln_nl_mean if sample_county, ///
+    ivar(county_id_num) time(year) gvar(g_csdid) ///
+    method(dripw) notyet vce(cluster county_id_num)
+capture noisily estat pretrend
+estat simple, estore(cs_mech_le2km)
+estat event, window(-4 4) estore(cse_mech_le2km)
+coefplot cse_mech_le2km, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+    coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) ///
+    recast(scatter) ciopts(recast(rcap)) ///
+    title("County CSDID event: unique pharmacies <=2km") ///
+    xtitle("Years relative to reform; -1 omitted") ytitle("ATT") ///
+    graphregion(color(white)) plotregion(color(white)) name(cse_mech_le2km, replace)
+graph export "$outdir\csdid_event_mechanism_le2km.png", replace width(2200)
+
+csdid pharm_nearest_pub_gt2km ln_pop ln_nl_mean if sample_county, ///
+    ivar(county_id_num) time(year) gvar(g_csdid) ///
+    method(dripw) notyet vce(cluster county_id_num)
+capture noisily estat pretrend
+estat simple, estore(cs_mech_gt2km)
+estat event, window(-4 4) estore(cse_mech_gt2km)
+coefplot cse_mech_gt2km, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+    coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+    xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) ///
+    recast(scatter) ciopts(recast(rcap)) ///
+    title("County CSDID event: unique pharmacies >2km") ///
+    xtitle("Years relative to reform; -1 omitted") ytitle("ATT") ///
+    graphregion(color(white)) plotregion(color(white)) name(cse_mech_gt2km, replace)
+graph export "$outdir\csdid_event_mechanism_gt2km.png", replace width(2200)
+
+esttab cs_mech_le2km cs_mech_gt2km using "$outdir\csdid_att_mechanism_pharmacy_2km.rtf", replace ///
+    se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ATT) ///
+    mtitles("<=2km" ">2km") ///
+    title("County CSDID ATT: unique pharmacies by 2 km threshold")
+esttab cse_mech_le2km cse_mech_gt2km using "$outdir\csdid_event_mechanism_pharmacy_2km.rtf", replace ///
+    se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+    keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4, relax) ///
+    mtitles("<=2km" ">2km") ///
+    title("County CSDID event: unique pharmacies by 2 km threshold")
+
+* CSDID distance-threshold robustness: <=500m and <=1km, ATT only
+eststo clear
+csdid pharm_nearest_pub_le500m ln_pop ln_nl_mean if sample_county, ///
+    ivar(county_id_num) time(year) gvar(g_csdid) ///
+    method(dripw) notyet vce(cluster county_id_num)
+estat simple, estore(cs_rob_le500m)
+csdid pharm_nearest_pub_le1km ln_pop ln_nl_mean if sample_county, ///
+    ivar(county_id_num) time(year) gvar(g_csdid) ///
+    method(dripw) notyet vce(cluster county_id_num)
+estat simple, estore(cs_rob_le1km)
+esttab cs_rob_le500m cs_rob_le1km using "$outdir\csdid_att_mechanism_distance_robustness.rtf", replace ///
+    se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ATT) ///
+    mtitles("<=500m" "<=1km") ///
+    title("County CSDID robustness: alternative near-hospital thresholds")
+
+*===============================================================================
+* Sun and Abraham (2021) interaction-weighted event studies
+* Reference design: Pharmaceutical Reform and Provider Supply (2025), Figure 2.
+* Event window is <=-5, -4, -3, -2, omitted -1, 0, 1, 2, and >=3.
+* The estimation sample is balanced over 2012-2019 and uses never-treated
+* counties as the control cohort. All confidence intervals are 95 percent and
+* standard errors are clustered by county.
+*===============================================================================
+gen int cohort_sa = policy_year if merge_policy == 3 & policy_year > 2012
+gen byte never_sa = merge_policy == 1
+bysort county_id_num: egen byte sa_periods = total(sample_county)
+
+* Counties treated in 2012 have no observed t=-1 period because the panel
+* begins in 2012. Exclude this left-censored cohort from the Sun-Abraham
+* sample; do not reclassify it as never treated.
+gen byte sample_sa = sample_county & sa_periods == 8 ///
+    & (never_sa == 1 | !missing(cohort_sa))
+
+assert missing(cohort_sa) if never_sa == 1
+assert !missing(cohort_sa) | never_sa == 1 if sample_sa
+
+gen byte sa_le_m5 = (rel <= -5) if sample_sa & !missing(cohort_sa)
+gen byte sa_m4 = (rel == -4) if sample_sa & !missing(cohort_sa)
+gen byte sa_m3 = (rel == -3) if sample_sa & !missing(cohort_sa)
+gen byte sa_m2 = (rel == -2) if sample_sa & !missing(cohort_sa)
+gen byte sa_p0 = (rel == 0) if sample_sa & !missing(cohort_sa)
+gen byte sa_p1 = (rel == 1) if sample_sa & !missing(cohort_sa)
+gen byte sa_p2 = (rel == 2) if sample_sa & !missing(cohort_sa)
+gen byte sa_ge_p3 = (rel >= 3) if sample_sa & !missing(cohort_sa)
+foreach variable in sa_le_m5 sa_m4 sa_m3 sa_m2 sa_p0 sa_p1 sa_p2 sa_ge_p3 {
+    replace `variable' = 0 if sample_sa & never_sa == 1
+}
+
+quietly count if sample_sa
+di as result "Sun-Abraham balanced-sample observations: " r(N)
+egen byte tag_sa_county = tag(county_id_num) if sample_sa
+quietly count if tag_sa_county == 1
+di as result "Sun-Abraham balanced-sample counties: " r(N)
+drop tag_sa_county
+
+capture program drop sa_event_graph
+program define sa_event_graph, eclass
+    version 17
+    syntax varname(numeric), STEM(name)
+    local outcome `varlist'
+    local outcome_label : variable label `outcome'
+    if `"`outcome_label'"' == "" local outcome_label "`outcome'"
+
+    quietly eventstudyinteract `outcome' ///
+        sa_le_m5 sa_m4 sa_m3 sa_m2 sa_p0 sa_p1 sa_p2 sa_ge_p3 ///
+        if sample_sa, cohort(cohort_sa) control_cohort(never_sa) ///
+        covariates(ln_pop ln_nl_mean) absorb(county_id_num prov_id#year) ///
+        vce(cluster county_id_num)
+
+    tempname sa_b sa_V sa_se sa_plot
+    matrix `sa_b' = e(b_iw)
+    matrix `sa_V' = e(V_iw)
+    matrix `sa_se' = J(1, colsof(`sa_b'), .)
+    forvalues column = 1/`=colsof(`sa_b')' {
+        matrix `sa_se'[1, `column'] = sqrt(`sa_V'[`column', `column'])
     }
-    estimates store bjs_`ystub'
+    local coefficient_names : colnames `sa_b'
+    matrix colnames `sa_se' = `coefficient_names'
+    matrix `sa_plot' = `sa_b' \ `sa_se'
 
-    * Callaway and Sant'Anna (2021): group-time ATT, not-yet-treated controls.
-    csdid `y' $ctrl_road if sample_road, ///
-        ivar(county_id) time(year) gvar(effective_policy_year) ///
-        method(dripw) vce(cluster county_id) notyet
-    estat event, window(-5 3) drop(Tm1) estore(cs_rob_`ystub')
-    capture noisily estat pretrend
+    ereturn post `sa_b' `sa_V'
+    capture noisily test sa_le_m5 sa_m4 sa_m3 sa_m2
+    if !_rc di as result "Sun-Abraham pretrend p-value (`outcome'): " %6.4f r(p)
 
-    * Sun and Abraham (2021): interaction-weighted estimator.
-    * Last-treated counties are controls, so their treatment year is excluded.
-    eventstudyinteract `y' ///
-        sa_F5event sa_F4event sa_F3event sa_F2event ///
-        sa_L0event sa_L1event sa_L2event sa_L3event ///
-        if sample_road & year < `last_policy_year', ///
-        cohort(sa_cohort) control_cohort(last_treat_control) ///
-        covariates($ctrl_road) absorb(county_id year) ///
-        vce(cluster county_id)
-    matrix b_sa_`ystub' = e(b_iw)
-    matrix V_sa_`ystub' = e(V_iw)
+    quietly reghdfe `outcome' ///
+        sa_le_m5 sa_m4 sa_m3 sa_m2 sa_p0 sa_p1 sa_p2 sa_ge_p3 ///
+        ln_pop ln_nl_mean if sample_sa, ///
+        absorb(county_id_num prov_id#year) vce(cluster county_id_num)
+    estimates store __twfe_sa
 
-    * Conventional TWFE event-study, shown for comparison.
-    reghdfe `y' F5event F4event F3event F2event ///
-        L0event L1event L2event L3event ///
-        $ctrl_road if sample_road, absorb(county_id year) cluster(county_id)
-    estimates store twfe_rob_`ystub'
+    coefplot ///
+        (matrix(`sa_plot'[1]), se(`sa_plot'[2]) label("Sun and Abraham (2021)") ///
+            msymbol(Dh) mcolor(forest_green) ciopts(recast(rcap) lcolor(forest_green))) ///
+        (__twfe_sa, label("TWFE") msymbol(plus) mcolor(black) ///
+            ciopts(recast(rcap) lcolor(black))), ///
+        keep(sa_le_m5 sa_m4 sa_m3 sa_m2 sa_p0 sa_p1 sa_p2 sa_ge_p3) ///
+        order(sa_le_m5 sa_m4 sa_m3 sa_m2 sa_p0 sa_p1 sa_p2 sa_ge_p3) ///
+        relocate(sa_le_m5=1 sa_m4=2 sa_m3=3 sa_m2=4 ///
+            sa_p0=6 sa_p1=7 sa_p2=8 sa_ge_p3=9) ///
+        coeflabels(sa_le_m5="<=-5" sa_m4="-4" sa_m3="-3" sa_m2="-2" ///
+            sa_p0="0" sa_p1="1" sa_p2="2" sa_ge_p3=">=3") ///
+        vertical xline(5.5, lcolor(gs7) lpattern(dash)) ///
+        yline(0, lcolor(gs8)) xlabel(1 "<=-5" 2 "-4" 3 "-3" 4 "-2" ///
+            5 "-1" 6 "0" 7 "1" 8 "2" 9 ">=3") ///
+        ylabel(, angle(0) grid glcolor(gs14)) ///
+        xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") ///
+        title("`outcome_label'", size(medsmall)) ///
+        subtitle("Sun-Abraham interaction-weighted event study", size(small)) ///
+        note("95% confidence intervals; county-clustered standard errors.", size(vsmall)) ///
+        legend(order(2 "Sun and Abraham (2021)" 4 "TWFE") rows(1) position(6)) ///
+        graphregion(color(white)) plotregion(color(white)) ///
+        name(`stem', replace)
 
-    * Cengiz et al. (2019): stacked event-study design.
-    * stackedev rewrites the active dataset, so isolate it from the main panel.
+    graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid/`stem'.png", replace width(2400)
+    graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid/`stem'.pdf", replace
+    estimates drop __twfe_sa
+end
+
+* County-wide main outcomes
+sa_event_graph county_pharmacy_count, stem(sa_county_pharm_count)
+sa_event_graph ln_county_pharmacy_count, stem(sa_county_pharm_ln)
+graph combine sa_county_pharm_count sa_county_pharm_ln, cols(2) imargin(tiny) ///
+    title("County-wide pharmacy outcomes: Sun-Abraham event studies") ///
+    graphregion(color(white)) name(sa_county_pharm_combined, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\sa_county_pharm_combined.png", replace width(3200)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\sa_county_pharm_combined.pdf", replace
+
+* Mechanism outcomes: mutually exclusive 2km groups
+sa_event_graph pharm_nearest_pub_le2km, stem(sa_mech_le2km)
+sa_event_graph pharm_nearest_pub_gt2km, stem(sa_mech_gt2km)
+graph combine sa_mech_le2km sa_mech_gt2km, cols(2) imargin(tiny) ///
+    title("County pharmacy location: Sun-Abraham event studies") ///
+    graphregion(color(white)) name(sa_mech_2km_combined, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\sa_mechanism_pharmacy_2km_combined.png", replace width(3400)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\sa_mechanism_pharmacy_2km_combined.pdf", replace
+
+*===============================================================================
+* Multi-estimator event-study comparison, following the layout of Figure 2
+* Sun-Abraham; Cengiz et al.; Borusyak-Jaravel-Spiess;
+* Callaway-Sant'Anna; and conventional TWFE.
+* Exact event periods -5 through +3 are used so all methods share one x-axis.
+*===============================================================================
+gen byte cmp_m5 = (rel == -5) if sample_sa & !missing(cohort_sa)
+gen byte cmp_m4 = (rel == -4) if sample_sa & !missing(cohort_sa)
+gen byte cmp_m3 = (rel == -3) if sample_sa & !missing(cohort_sa)
+gen byte cmp_m2 = (rel == -2) if sample_sa & !missing(cohort_sa)
+gen byte cmp_p0 = (rel == 0) if sample_sa & !missing(cohort_sa)
+gen byte cmp_p1 = (rel == 1) if sample_sa & !missing(cohort_sa)
+gen byte cmp_p2 = (rel == 2) if sample_sa & !missing(cohort_sa)
+gen byte cmp_p3 = (rel == 3) if sample_sa & !missing(cohort_sa)
+foreach variable in cmp_m5 cmp_m4 cmp_m3 cmp_m2 cmp_p0 cmp_p1 cmp_p2 cmp_p3 {
+    replace `variable' = 0 if sample_sa & never_sa == 1
+}
+
+capture program drop multi_event_graph
+program define multi_event_graph, eclass
+    version 17
+    syntax varname(numeric), STEM(name)
+    local outcome `varlist'
+    local outcome_label : variable label `outcome'
+    if `"`outcome_label'"' == "" local outcome_label "`outcome'"
+    local event_names "event_m5 event_m4 event_m3 event_m2 event_m1 event_p0 event_p1 event_p2 event_p3"
+    local pre_dummies "cmp_m5 cmp_m4 cmp_m3 cmp_m2"
+    local post_dummies "cmp_p0 cmp_p1 cmp_p2 cmp_p3"
+
+    tempname b_sa se_sa raw_b_sa raw_V_sa ///
+        b_cengiz se_cengiz b_bjs se_bjs ///
+        b_cs se_cs b_twfe se_twfe
+    foreach matrix_name in b_sa se_sa b_cengiz se_cengiz b_bjs se_bjs ///
+        b_cs se_cs b_twfe se_twfe {
+        matrix ``matrix_name'' = J(1, 9, .)
+        matrix colnames ``matrix_name'' = `event_names'
+    }
+    foreach matrix_name in b_sa se_sa b_cengiz se_cengiz b_twfe se_twfe {
+        matrix ``matrix_name''[1, 5] = 0
+    }
+
+    * Sun and Abraham (2021): interaction-weighted cohort effects
+    quietly eventstudyinteract `outcome' `pre_dummies' `post_dummies' ///
+        if sample_sa, cohort(cohort_sa) control_cohort(never_sa) ///
+        covariates(ln_pop ln_nl_mean) absorb(county_id_num year) ///
+        vce(cluster county_id_num)
+    matrix `raw_b_sa' = e(b_iw)
+    matrix `raw_V_sa' = e(V_iw)
+    local position = 1
+    foreach coefficient of local pre_dummies {
+        local source_column = colnumb(`raw_b_sa', "`coefficient'")
+        matrix `b_sa'[1, `position'] = `raw_b_sa'[1, `source_column']
+        matrix `se_sa'[1, `position'] = sqrt(`raw_V_sa'[`source_column', `source_column'])
+        local position = `position' + 1
+    }
+    local position = 6
+    foreach coefficient of local post_dummies {
+        local source_column = colnumb(`raw_b_sa', "`coefficient'")
+        matrix `b_sa'[1, `position'] = `raw_b_sa'[1, `source_column']
+        matrix `se_sa'[1, `position'] = sqrt(`raw_V_sa'[`source_column', `source_column'])
+        local position = `position' + 1
+    }
+
+    * Cengiz et al. (2019): stacked cohort-specific event studies
     preserve
-        stackedev `y' ///
-            st_F5event st_F4event st_F3event st_F2event ///
-            st_L0event st_L1event st_L2event st_L3event ///
-            if sample_road & year < `last_policy_year', ///
-            cohort(stack_cohort) time(year) never_treat(last_treat_control) ///
-            unit_fe(county_id) clust_unit(county_id) covariates($ctrl_road)
-        estimates store stack_`ystub'
+        keep if sample_sa
+        quietly stackedev `outcome' `pre_dummies' `post_dummies', ///
+            cohort(cohort_sa) time(year) never_treat(never_sa) ///
+            unit_fe(county_id_num) clust_unit(county_id_num) ///
+            covariates(ln_pop ln_nl_mean)
+        local position = 1
+        foreach coefficient of local pre_dummies {
+            matrix `b_cengiz'[1, `position'] = _b[`coefficient']
+            matrix `se_cengiz'[1, `position'] = _se[`coefficient']
+            local position = `position' + 1
+        }
+        local position = 6
+        foreach coefficient of local post_dummies {
+            matrix `b_cengiz'[1, `position'] = _b[`coefficient']
+            matrix `se_cengiz'[1, `position'] = _se[`coefficient']
+            local position = `position' + 1
+        }
     restore
 
-    * The odd-numbered plot layers are the point estimates in event_plot:
-    *   1 BJS, 3 Callaway-Sant'Anna, 5 Sun-Abraham, 7 Cengiz stacked, 9 TWFE.
-    * Use those layers in legend(order()) so the legend shows the marker icons,
-    * not only the confidence-interval caps.
-    event_plot bjs_`ystub' cs_rob_`ystub' b_sa_`ystub'#V_sa_`ystub' stack_`ystub' twfe_rob_`ystub', ///
-        stub_lag(tau# Tp# sa_L#event st_L#event L#event) ///
-        stub_lead(pre# Tm# sa_F#event st_F#event F#event) ///
-        trimlag(3) trimlead(5) together plottype(scatter) ciplottype(rcap) ///
-        perturb(-0.24 -0.12 0 0.12 0.24) ///
-        lag_opt1(msymbol(circle) mcolor(red) color(red) msize(small)) ///
-        lag_ci_opt1(color(red%45) lwidth(thin)) ///
-        lag_opt2(msymbol(X) mcolor(orange) color(orange) msize(small)) ///
-        lag_ci_opt2(color(orange%45) lwidth(thin)) ///
-        lag_opt3(msymbol(diamond_hollow) mcolor(green) color(green) msize(small)) ///
-        lag_ci_opt3(color(green%45) lwidth(thin)) ///
-        lag_opt4(msymbol(triangle_hollow) mcolor(blue) color(blue) msize(small)) ///
-        lag_ci_opt4(color(blue%45) lwidth(thin)) ///
-        lag_opt5(msymbol(plus) mcolor(black) color(black) msize(small)) ///
-        lag_ci_opt5(color(black%45) lwidth(thin)) ///
-        graph_opt( ///
-            title("") ///
-            xtitle("Years relative to reform", size(small)) ///
-            ytitle("Coefficients", size(small)) ///
-            xlabel(-5(1)3, labsize(small)) ///
-            ylabel(, labsize(small) angle(horizontal)) ///
-            xline(-0.5, lcolor(gs8) lpattern(dash)) ///
-            yline(0, lcolor(gs8)) ///
-            name(event_5est_`ystub', replace) ///
-            graphregion(color(white) margin(small)) ///
-            plotregion(color(white) margin(small)) bgcolor(white) ///
-            legend(on order(5 "Sun and Abraham (2021)" ///
-                            7 "Cengiz et al. (2019)" ///
-                            1 "Borusyak et al. (2021)" ///
-                            3 "Callaway and Sant'Anna (2021)" ///
-                            9 "TWFE") ///
-                   rows(2) position(6) ring(1) size(vsmall) ///
-                   symxsize(*0.6) keygap(*0.4) colgap(*0.7) ///
-                   region(lstyle(none) fcolor(none))) ///
-        )
-    graph export "$OUT\event_5estimators_`ystub'.png", replace width(2400)
-}
+    * Borusyak, Jaravel, and Spiess (2021): imputation estimator
+    preserve
+        quietly did_imputation `outcome' county_id_num year cohort_sa if sample_sa, ///
+            horizons(0/3) pretrends(5) autosample minn(0) ///
+            controls(ln_pop ln_nl_mean) fe(county_id_num year) ///
+            cluster(county_id_num) tol(0.001) maxit(2000)
+        local position = 1
+        forvalues lead = 5(-1)1 {
+            matrix `b_bjs'[1, `position'] = _b[pre`lead']
+            matrix `se_bjs'[1, `position'] = _se[pre`lead']
+            local position = `position' + 1
+        }
+        local position = 6
+        forvalues lag = 0/3 {
+            matrix `b_bjs'[1, `position'] = _b[tau`lag']
+            matrix `se_bjs'[1, `position'] = _se[tau`lag']
+            local position = `position' + 1
+        }
+    restore
 
+    * Callaway and Sant'Anna (2021): doubly robust group-time ATT
+    preserve
+        capture estimates drop __cs_event
+        quietly csdid `outcome' ln_pop ln_nl_mean if sample_sa, ///
+            ivar(county_id_num) time(year) gvar(g_csdid) ///
+            method(dripw) notyet vce(cluster county_id_num)
+        quietly estat event, window(-5 3) estore(__cs_event)
+        estimates restore __cs_event
+        local position = 1
+        forvalues lead = 5(-1)1 {
+            capture matrix `b_cs'[1, `position'] = _b[Tm`lead']
+            if !_rc {
+                matrix `se_cs'[1, `position'] = _se[Tm`lead']
+            }
+            local position = `position' + 1
+        }
+        local position = 6
+        forvalues lag = 0/3 {
+            capture matrix `b_cs'[1, `position'] = _b[Tp`lag']
+            if !_rc {
+                matrix `se_cs'[1, `position'] = _se[Tp`lag']
+            }
+            local position = `position' + 1
+        }
+        estimates drop __cs_event
+    restore
+
+    * Conventional TWFE, with event time -1 normalized to zero
+    quietly reghdfe `outcome' `pre_dummies' `post_dummies' ///
+        ln_pop ln_nl_mean if sample_sa, ///
+        absorb(county_id_num year) vce(cluster county_id_num)
+    local position = 1
+    foreach coefficient of local pre_dummies {
+        matrix `b_twfe'[1, `position'] = _b[`coefficient']
+        matrix `se_twfe'[1, `position'] = _se[`coefficient']
+        local position = `position' + 1
+    }
+    local position = 6
+    foreach coefficient of local post_dummies {
+        matrix `b_twfe'[1, `position'] = _b[`coefficient']
+        matrix `se_twfe'[1, `position'] = _se[`coefficient']
+        local position = `position' + 1
+    }
+
+    coefplot ///
+        (matrix(`b_sa'), se(`se_sa') label("Sun and Abraham (2021)") ///
+            offset(-0.24) msymbol(Dh) mcolor(forest_green) ///
+            ciopts(recast(rcap) lcolor(forest_green) lwidth(vthin))) ///
+        (matrix(`b_cengiz'), se(`se_cengiz') label("Cengiz et al. (2019)") ///
+            offset(-0.12) msymbol(Th) mcolor(navy) ///
+            ciopts(recast(rcap) lcolor(navy) lwidth(vthin))) ///
+        (matrix(`b_bjs'), se(`se_bjs') label("Borusyak et al. (2021)") ///
+            offset(0) msymbol(O) mcolor(red) ///
+            ciopts(recast(rcap) lcolor(red) lwidth(vthin))) ///
+        (matrix(`b_cs'), se(`se_cs') label("Callaway and Sant'Anna (2021)") ///
+            offset(0.12) msymbol(X) mcolor(orange) ///
+            ciopts(recast(rcap) lcolor(orange) lwidth(vthin))) ///
+        (matrix(`b_twfe'), se(`se_twfe') label("TWFE") ///
+            offset(0.24) msymbol(plus) mcolor(black) ///
+            ciopts(recast(rcap) lcolor(black) lwidth(vthin))), ///
+        keep(`event_names') order(`event_names') vertical ///
+        coeflabels(event_m5="-5" event_m4="-4" event_m3="-3" event_m2="-2" ///
+            event_m1="-1" event_p0="0" event_p1="1" event_p2="2" event_p3="3") ///
+        xline(5.5, lcolor(gs7) lpattern(dash)) yline(0, lcolor(gs8)) ///
+        ylabel(, angle(0) grid glcolor(gs14)) ///
+        xtitle("Years relative to reform") ytitle("Coefficient") ///
+        title("`outcome_label'", size(medsmall)) ///
+        subtitle("Event-study estimates across staggered-DID methods", size(small)) ///
+        note("95% confidence intervals; county-clustered standard errors; method-specific estimands.", size(tiny)) ///
+        legend(order(2 "Sun and Abraham (2021)" 4 "Cengiz et al. (2019)" ///
+            6 "Borusyak et al. (2021)" 8 "Callaway and Sant'Anna (2021)" ///
+            10 "TWFE") cols(1) position(11) ring(0) size(vsmall)) ///
+        graphregion(color(white)) plotregion(color(white)) ///
+        name(`stem', replace)
+
+    graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid/`stem'.png", replace width(2600)
+    graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid/`stem'.pdf", replace
+end
+
+* County-wide outcomes: Figure 2-style five-estimator comparison
+multi_event_graph county_pharmacy_count, stem(multi_county_pharm_count)
+multi_event_graph ln_county_pharmacy_count, stem(multi_county_pharm_ln)
+graph combine multi_county_pharm_count multi_county_pharm_ln, cols(2) imargin(tiny) ///
+    title("County-wide pharmacy outcomes: multi-estimator event studies") ///
+    graphregion(color(white)) name(multi_county_pharm_combined, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\multi_county_pharm_combined.png", replace width(3400)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\multi_county_pharm_combined.pdf", replace
+
+* Mechanism outcomes: mutually exclusive 2km groups
+multi_event_graph pharm_nearest_pub_le2km, stem(multi_mech_le2km)
+multi_event_graph pharm_nearest_pub_gt2km, stem(multi_mech_gt2km)
+graph combine multi_mech_le2km multi_mech_gt2km, cols(2) imargin(tiny) ///
+    title("County pharmacy location: multi-estimator event studies") ///
+    graphregion(color(white)) name(multi_mech_2km_combined, replace)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\multi_mechanism_pharmacy_2km_combined.png", replace width(3600)
+graph export "D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid\multi_mechanism_pharmacy_2km_combined.pdf", replace
+
+di as result "County analyses completed successfully."
+di as result "Mechanism outcomes: unique geocoded pharmacies within and beyond 2km of public hospitals."
+di as result "Distance robustness outcomes: unique geocoded pharmacies within 500m and 1km."
+di as result "Sun-Abraham event-study graphs: PNG and PDF formats."
+di as result "Multi-estimator event-study graphs: Sun-Abraham, Cengiz, Borusyak, Callaway-Sant'Anna, and TWFE."
+di as result "Outputs: D:\Hospital_Pharmacy program\output\regression\county_v2_ln_event_csdid"
 log close

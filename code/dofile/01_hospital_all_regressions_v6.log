@@ -1,0 +1,2384 @@
+
+  ___  ____  ____  ____  ____ ©
+ /__    /   ____/   /   ____/      17.0
+___/   /   /___/   /   /___/       MP—Parallel Edition
+
+ Statistics and Data Science       Copyright 1985-2021 StataCorp LLC
+                                   StataCorp
+                                   4905 Lakeway Drive
+                                   College Station, Texas 77845 USA
+                                   800-STATA-PC        https://www.stata.com
+                                   979-696-4600        stata@stata.com
+
+Stata license: Unlimited-user 64-core network perpetual
+Serial number: 18461036
+  Licensed to: TEAM BTCR
+               TEAM BTCR
+
+Notes:
+      1. Stata is running in batch mode.
+      2. Unicode is supported; see help unicode_advice.
+      3. More than 2 billion observations are allowed; see help obs_advice.
+      4. Maximum number of variables is set to 5,000; see help set_maxvar.
+
+. do "D:\Hospital_Pharmacy program\code\dofile\01_hospital_all_regressions_v6.d
+> o" 
+
+. *============================================================================
+> ===
+. * 01_hospital_all_regressions_v6.do
+. * Pharmacy is the main outcome: 500m, 1km, and 2km.
+. * Pharmacy radius robustness uses 3km, 1-2km, and 2-3km.
+. * Annual changes in pharmacy counts are additional outcomes at the main radii
+> .
+. * Nearest-public-hospital-assigned pharmacy counts avoid overlap across hospi
+> tals.
+. * Restaurant outcomes and restaurant placebo tests are excluded.
+. * All count logs are ln(count), without adding 1.
+. *============================================================================
+> ===
+. version 17
+
+. clear all
+
+. set more off
+
+. set linesize 255
+
+. 
+. capture mkdir "D:\Hospital_Pharmacy program\output\regression"
+
+. capture mkdir "D:\Hospital_Pharmacy program\output\regression\hospital_v6"
+
+. capture log close _all
+
+. log using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\01_hospital_v6_nearest_public.log", replace text
+(file D:\Hospital_Pharmacy program\output\regression\hospital_v6\01_hospital_v6_nearest_public.log not found)
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  <unnamed>
+       log:  D:\Hospital_Pharmacy program\output\regression\hospital_v6\01_hospital_v6_nearest_public.log
+  log type:  text
+ opened on:  24 Jul 2026, 12:20:42
+
+. 
+. capture which reghdfe
+
+. if _rc exit 111
+
+. capture which esttab
+
+. if _rc exit 111
+
+. capture which eststo
+
+. if _rc exit 111
+
+. capture which coefplot
+
+. if _rc exit 111
+
+. capture which csdid
+
+. if _rc exit 111
+
+. capture which ppmlhdfe
+
+. if _rc {
+.     di as error "Required command not installed: ppmlhdfe"
+.     di as error "Install it with: ssc install ppmlhdfe"
+.     exit 111
+. }
+
+. 
+. confirm file "D:\Hospital_Pharmacy program\data\hospital_pharmacy\hosp_pharm_panel\hospital_pharm_panel.dta"
+
+. 
+. use "D:\Hospital_Pharmacy program\data\hospital_pharmacy\hosp_pharm_panel\hospital_pharm_panel.dta", clear
+(hospital pharmacy panel)
+
+. isid hospital_id year
+
+. assert inrange(year, 2012, 2019) if !missing(year)
+
+. xtset hospital_id year
+
+Panel variable: hospital_id (unbalanced)
+ Time variable: year, 2012 to 2019
+         Delta: 1 unit
+
+. 
+. confirm variable hospital_id
+
+. confirm variable year
+
+. confirm variable county_id
+
+. confirm variable policy_year
+
+. confirm variable public_flag
+
+. confirm variable private_flag
+
+. confirm variable pharm_500m
+
+. confirm variable pharm_1km
+
+. confirm variable pharm_2km
+
+. confirm variable pharm_3km
+
+. confirm variable pharm_1_2km
+
+. confirm variable pharm_2_3km
+
+. confirm variable pharm_nearest_pub_total
+
+. confirm variable pharm_nearest_pub_le500m
+
+. confirm variable pharm_nearest_pub_gt500m
+
+. confirm variable pharm_nearest_pub_le1km
+
+. confirm variable pharm_nearest_pub_gt1km
+
+. confirm variable pharm_nearest_pub_le2km
+
+. confirm variable pharm_nearest_pub_gt2km
+
+. confirm variable ln_ntl_mean_500m
+
+. confirm variable ln_ntl_mean_1km
+
+. confirm variable ln_ntl_mean_2km
+
+. confirm variable ln_ntl_mean_3km
+
+. confirm variable ln_ntl_mean_1_2km
+
+. confirm variable ln_ntl_mean_2_3km
+
+. 
+. capture confirm variable var
+
+. if !_rc rename var business_scope
+
+. capture confirm variable var_1
+
+. if !_rc rename var_1 registered_address
+
+. capture confirm variable var_2
+
+. if !_rc rename var_2 enterprise_status_code
+
+. capture confirm string variable public
+
+. if !_rc {
+.     rename public ownership_type
+. }
+
+. else {
+.     capture confirm variable public
+.     if !_rc drop public
+. }
+
+. 
+. capture drop county_id_num
+
+. capture confirm numeric variable county_id
+
+. if !_rc {
+.     gen long county_id_num = county_id
+(34 missing values generated)
+. }
+
+. else {
+.     destring county_id, gen(county_id_num)
+. }
+
+. gen long prov_id = floor(county_id_num / 10000) if !missing(county_id_num)
+(34 missing values generated)
+
+. gen long city_id = floor(county_id_num / 100) if !missing(county_id_num)
+(34 missing values generated)
+
+. gen byte public = (public_flag == 1) if !missing(public_flag)
+
+. gen byte post_policy = (year >= policy_year) if !missing(year, policy_year)
+(34 missing values generated)
+
+. gen byte ddd = public * post_policy if !missing(public, post_policy)
+(34 missing values generated)
+
+. gen int rel = year - policy_year if !missing(year, policy_year)
+(34 missing values generated)
+
+. gen byte sample_hospital = inrange(year, 2012, 2019) & policy_year > 2012 ///
+>     & !missing(public, county_id_num, prov_id)
+
+. gen byte sample_nearest_public = sample_hospital & public == 1 ///
+>     & !missing(pharm_nearest_pub_le500m, pharm_nearest_pub_le1km, ///
+>         pharm_nearest_pub_le2km, pharm_nearest_pub_gt2km)
+
+. 
+. assert pharm_500m >= 0 if !missing(pharm_500m)
+
+. assert pharm_1km >= 0 if !missing(pharm_1km)
+
+. assert pharm_2km >= 0 if !missing(pharm_2km)
+
+. assert pharm_3km >= 0 if !missing(pharm_3km)
+
+. assert pharm_1_2km >= 0 if !missing(pharm_1_2km)
+
+. assert pharm_2_3km >= 0 if !missing(pharm_2_3km)
+
+. assert pharm_nearest_pub_total >= 0 if !missing(pharm_nearest_pub_total)
+
+. assert pharm_nearest_pub_le500m >= 0 if !missing(pharm_nearest_pub_le500m)
+
+. assert pharm_nearest_pub_le1km >= 0 if !missing(pharm_nearest_pub_le1km)
+
+. assert pharm_nearest_pub_le2km >= 0 if !missing(pharm_nearest_pub_le2km)
+
+. assert pharm_nearest_pub_gt2km >= 0 if !missing(pharm_nearest_pub_gt2km)
+
+. assert pharm_nearest_pub_le500m <= pharm_nearest_pub_le1km if sample_nearest_public
+
+. assert pharm_nearest_pub_le1km <= pharm_nearest_pub_le2km if sample_nearest_public
+
+. assert pharm_nearest_pub_le2km + pharm_nearest_pub_gt2km == ///
+>     pharm_nearest_pub_total if sample_nearest_public
+
+. 
+. gen ln_pharm_500m = ln(pharm_500m) if pharm_500m > 0 & !missing(pharm_500m)
+(43,148 missing values generated)
+
+. gen ln_pharm_1km = ln(pharm_1km) if pharm_1km > 0 & !missing(pharm_1km)
+(27,344 missing values generated)
+
+. gen ln_pharm_2km = ln(pharm_2km) if pharm_2km > 0 & !missing(pharm_2km)
+(18,122 missing values generated)
+
+. gen ln_pharm_3km = ln(pharm_3km) if pharm_3km > 0 & !missing(pharm_3km)
+(14,652 missing values generated)
+
+. gen ln_pharm_1_2km = ln(pharm_1_2km) if pharm_1_2km > 0 & !missing(pharm_1_2km)
+(28,932 missing values generated)
+
+. gen ln_pharm_2_3km = ln(pharm_2_3km) if pharm_2_3km > 0 & !missing(pharm_2_3km)
+(36,177 missing values generated)
+
+. gen ln_nearest_pub_500m = ln(pharm_nearest_pub_le500m) ///
+>     if pharm_nearest_pub_le500m > 0 & !missing(pharm_nearest_pub_le500m)
+(121,522 missing values generated)
+
+. gen ln_nearest_pub_1km = ln(pharm_nearest_pub_le1km) ///
+>     if pharm_nearest_pub_le1km > 0 & !missing(pharm_nearest_pub_le1km)
+(117,662 missing values generated)
+
+. gen ln_nearest_pub_2km = ln(pharm_nearest_pub_le2km) ///
+>     if pharm_nearest_pub_le2km > 0 & !missing(pharm_nearest_pub_le2km)
+(115,444 missing values generated)
+
+. gen d_pharm_500m = D.pharm_500m
+(30,718 missing values generated)
+
+. gen d_pharm_1km = D.pharm_1km
+(30,718 missing values generated)
+
+. gen d_pharm_2km = D.pharm_2km
+(30,718 missing values generated)
+
+. 
+. gen int g_csdid = policy_year if public == 1 & policy_year > 2012
+(111,820 missing values generated)
+
+. replace g_csdid = 0 if public == 0
+(109,922 real changes made)
+
+. gen byte ev_le_m4 = public * (rel <= -4) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_m3 = public * (rel == -3) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_m2 = public * (rel == -2) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_0 = public * (rel == 0) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_p1 = public * (rel == 1) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_p2 = public * (rel == 2) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_p3 = public * (rel == 3) if !missing(public, rel)
+(34 missing values generated)
+
+. gen byte ev_ge_p4 = public * (rel >= 4) if !missing(public, rel)
+(34 missing values generated)
+
+. 
+. label variable hospital_id "Hospital ID"
+
+. label variable entname "Hospital name"
+
+. label variable year "Calendar year"
+
+. label variable county_id "Spatial county code"
+
+. label variable county_id_num "Spatial county code (numeric)"
+
+. label variable prov_id "Province code"
+
+. label variable city_id "Prefecture code"
+
+. label variable policy_year "Local zero-markup reform year"
+
+. capture label variable ownership_type "Hospital ownership type (source text)"
+
+. label variable public "Public hospital"
+
+. label variable public_flag "Public hospital flag"
+
+. label variable private_flag "Private hospital flag"
+
+. label variable post_policy "Post local reform"
+
+. label variable ddd "Public hospital x post reform"
+
+. label variable rel "Years relative to reform"
+
+. label variable sample_hospital "Main hospital estimation sample"
+
+. label variable sample_nearest_public "Nearest-public-hospital count sample"
+
+. label variable g_csdid "First treatment year; 0=never treated"
+
+. label variable ev_le_m4 "Public x event <=-4"
+
+. label variable ev_m3 "Public x event -3"
+
+. label variable ev_m2 "Public x event -2"
+
+. label variable ev_0 "Public x event 0"
+
+. label variable ev_p1 "Public x event +1"
+
+. label variable ev_p2 "Public x event +2"
+
+. label variable ev_p3 "Public x event +3"
+
+. label variable ev_ge_p4 "Public x event >=+4"
+
+. 
+. capture label define yesno 0 "No" 1 "Yes", replace
+
+. label values public yesno
+
+. label values public_flag yesno
+
+. label values private_flag yesno
+
+. label values post_policy yesno
+
+. label values sample_hospital yesno
+
+. label values sample_nearest_public yesno
+
+. 
+. label variable pharm_500m "Pharmacies within 500 m"
+
+. label variable pharm_1km "Pharmacies within 1 km"
+
+. label variable pharm_2km "Pharmacies within 2 km"
+
+. label variable pharm_3km "Pharmacies within 3 km"
+
+. label variable pharm_1_2km "Pharmacies in 1-2 km ring"
+
+. label variable pharm_2_3km "Pharmacies in 2-3 km ring"
+
+. label variable ln_pharm_500m "ln(pharmacies), within 500 m"
+
+. label variable ln_pharm_1km "ln(pharmacies), within 1 km"
+
+. label variable ln_pharm_2km "ln(pharmacies), within 2 km"
+
+. label variable ln_pharm_3km "ln(pharmacies), within 3 km"
+
+. label variable ln_pharm_1_2km "ln(pharmacies), in 1-2 km ring"
+
+. label variable ln_pharm_2_3km "ln(pharmacies), in 2-3 km ring"
+
+. label variable d_pharm_500m "Annual change in pharmacies within 500 m"
+
+. label variable d_pharm_1km "Annual change in pharmacies within 1 km"
+
+. label variable d_pharm_2km "Annual change in pharmacies within 2 km"
+
+. label variable pharm_nearest_pub_total "Pharmacies assigned to nearest public hospital"
+
+. label variable pharm_nearest_pub_le500m "Assigned pharmacies within 500 m"
+
+. label variable pharm_nearest_pub_gt500m "Assigned pharmacies beyond 500 m"
+
+. label variable pharm_nearest_pub_le1km "Assigned pharmacies within 1 km"
+
+. label variable pharm_nearest_pub_gt1km "Assigned pharmacies beyond 1 km"
+
+. label variable pharm_nearest_pub_le2km "Assigned pharmacies within 2 km"
+
+. label variable pharm_nearest_pub_gt2km "Assigned pharmacies beyond 2 km"
+
+. label variable ln_nearest_pub_500m "ln(assigned pharmacies within 500 m)"
+
+. label variable ln_nearest_pub_1km "ln(assigned pharmacies within 1 km)"
+
+. label variable ln_nearest_pub_2km "ln(assigned pharmacies within 2 km)"
+
+. label variable ln_ntl_mean_500m "ln(mean nighttime lights+1), within 500 m"
+
+. label variable ln_ntl_mean_1km "ln(mean nighttime lights+1), within 1 km"
+
+. label variable ln_ntl_mean_2km "ln(mean nighttime lights+1), within 2 km"
+
+. label variable ln_ntl_mean_3km "ln(mean nighttime lights+1), within 3 km"
+
+. label variable ln_ntl_mean_1_2km "ln(mean nighttime lights+1), in 1-2 km ring"
+
+. label variable ln_ntl_mean_2_3km "ln(mean nighttime lights+1), in 2-3 km ring"
+
+. 
+. compress
+  variable year was long now int
+  variable public_flag was long now byte
+  variable private_flag was long now byte
+  variable score was long now byte
+  variable realness_score_100 was long now byte
+  variable pharm_500m was long now byte
+  variable pharm_1km was long now int
+  variable pharm_2km was long now int
+  variable pharm_3km was long now int
+  variable pharm_1_2km was long now int
+  variable pharm_2_3km was long now int
+  variable chain_pharm_500m was long now byte
+  variable chain_pharm_1km was long now byte
+  variable chain_pharm_2km was long now int
+  variable chain_pharm_3km was long now int
+  variable chain_pharm_1_2km was long now int
+  variable chain_pharm_2_3km was long now int
+  variable resta_500m was long now int
+  variable resta_1km was long now int
+  variable resta_2km was long now int
+  variable resta_3km was long now int
+  variable resta_1_2km was long now int
+  variable resta_2_3km was long now int
+  variable pharm_nearest_pub_total was long now int
+  variable pharm_nearest_pub_le500m was long now byte
+  variable pharm_nearest_pub_gt500m was long now int
+  variable pharm_nearest_pub_le1km was long now int
+  variable pharm_nearest_pub_gt1km was long now int
+  variable pharm_nearest_pub_le2km was long now int
+  variable pharm_nearest_pub_gt2km was long now int
+  variable prov_id was long now byte
+  variable city_id was long now int
+  variable rel was int now byte
+  variable d_pharm_500m was float now byte
+  variable d_pharm_1km was float now int
+  variable d_pharm_2km was float now int
+  variable county_id was double now long
+  variable policy_year was double now int
+  (13,448,253 bytes saved)
+
+. save "D:\Hospital_Pharmacy program\output\regression\hospital_v6\hospital_pharm_panel_labeled_ln.dta", replace
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\hospital_pharm_panel_labeled_ln.dta saved
+
+. quietly count if sample_hospital
+
+. di as result "Main sample observations: " r(N)
+Main sample observations: 141285
+
+. 
+. *===============================================================================
+. * Main results: pharmacy outcomes
+. * Main radii are 500m, 1km, and 2km.
+. *===============================================================================
+. 
+. * Hospital TWFE main: pharmacy count
+. eststo clear
+
+. eststo did_pharm_count_500m: reghdfe pharm_500m ddd post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 6 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =       2.15
+Statistics robust to heteroskedasticity           Prob > F        =     0.0916
+                                                  R-squared       =     0.8507
+                                                  Adj R-squared   =     0.8153
+                                                  Within R-sq.    =     0.0003
+Number of clusters (county_id_num) =      2,567   Root MSE        =     2.4728
+
+                          (Std. err. adjusted for 2,567 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+      pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+             ddd |   -.200439   .0864749    -2.32   0.021    -.3700068   -.0308713
+     post_policy |   .1221866   .0649306     1.88   0.060    -.0051351    .2495084
+ln_ntl_mean_500m |   .0015828   .1255165     0.01   0.990     -.244541    .2477067
+           _cons |   4.736539   .3480673    13.61   0.000     4.054018     5.41906
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     26553       26553           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_count_1km: reghdfe pharm_1km ddd post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =       7.29
+Statistics robust to heteroskedasticity           Prob > F        =     0.0001
+                                                  R-squared       =     0.8658
+                                                  Adj R-squared   =     0.8340
+                                                  Within R-sq.    =     0.0012
+Number of clusters (county_id_num) =      2,567   Root MSE        =     6.5033
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |  -.9978963   .2458201    -4.06   0.000    -1.479922   -.5158705
+    post_policy |   .7640921   .1975949     3.87   0.000     .3766304    1.151554
+ln_ntl_mean_1km |   .0757879   .4471261     0.17   0.865    -.8009767    .9525525
+          _cons |   14.15067   1.204587    11.75   0.000     11.78861    16.51273
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     26553       26553           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_count_2km: reghdfe pharm_2km ddd post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =      11.07
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8730
+                                                  Adj R-squared   =     0.8428
+                                                  Within R-sq.    =     0.0020
+Number of clusters (county_id_num) =      2,567   Root MSE        =    17.0273
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |  -2.887153   .6448107    -4.48   0.000    -4.151555   -1.622751
+    post_policy |    2.89528   .5745641     5.04   0.000     1.768623    4.021936
+ln_ntl_mean_2km |  -.4779934   1.469464    -0.33   0.745    -3.359449    2.403462
+          _cons |   40.17627   3.709772    10.83   0.000     32.90182    47.45072
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     26553       26553           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_pharm_count_500m did_pharm_count_1km did_pharm_count_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_count.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("500m" "1km" "2km") title("Hospital TWFE main: pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_count.rtf)
+
+. 
+. 
+. eststo clear
+
+. eststo did_pharm_count_500m: reghdfe pharm_500m ddd post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =       3.36
+Statistics robust to heteroskedasticity           Prob > F        =     0.0180
+                                                  R-squared       =     0.8646
+                                                  Adj R-squared   =     0.8322
+                                                  Within R-sq.    =     0.0003
+Number of clusters (county_id_num) =      2,567   Root MSE        =     2.3575
+
+                          (Std. err. adjusted for 2,567 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+      pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+             ddd |  -.2328456   .0763689    -3.05   0.002    -.3825966   -.0830946
+     post_policy |   .0746134   .0958635     0.78   0.436    -.1133643    .2625911
+ln_ntl_mean_500m |  -.0814508    .114602    -0.71   0.477    -.3061727     .143271
+           _cons |   5.002246   .3206425    15.60   0.000     4.373502    5.630991
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     26553       26553           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_count_1km: reghdfe pharm_1km ddd post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =      11.65
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8833
+                                                  Adj R-squared   =     0.8553
+                                                  Within R-sq.    =     0.0014
+Number of clusters (county_id_num) =      2,567   Root MSE        =     6.0711
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |  -1.183805   .2108577    -5.61   0.000    -1.597273   -.7703366
+    post_policy |   .8170034   .3035325     2.69   0.007       .22181    1.412197
+ln_ntl_mean_1km |   -.275986   .4066449    -0.68   0.497    -1.073371    .5213995
+          _cons |   15.08796    1.10279    13.68   0.000     12.92551    17.25041
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     26553       26553           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_count_2km: reghdfe pharm_2km ddd post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =      17.44
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8917
+                                                  Adj R-squared   =     0.8657
+                                                  Within R-sq.    =     0.0035
+Number of clusters (county_id_num) =      2,567   Root MSE        =    15.7407
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |  -3.727209   .5829275    -6.39   0.000    -4.870265   -2.584153
+    post_policy |   4.154991   .9310446     4.46   0.000     2.329316    5.980666
+ln_ntl_mean_2km |   -2.02978   1.327631    -1.53   0.126    -4.633117    .5735559
+          _cons |   43.38345   3.358199    12.92   0.000     36.79839    49.96851
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     26553       26553           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_pharm_count_500m did_pharm_count_1km did_pharm_count_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_count2.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("500m" "1km" "2km") title("Hospital TWFE main: pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_count2.rtf)
+
+. 
+. * Hospital TWFE main: ln pharmacy count
+. eststo clear
+
+. eststo did_pharm_ln_500m: reghdfe ln_pharm_500m ddd post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2443 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =     98,036
+Absorbing 2 HDFE groups                           F(   3,   2488) =       5.14
+Statistics robust to heteroskedasticity           Prob > F        =     0.0015
+                                                  R-squared       =     0.8687
+                                                  Adj R-squared   =     0.8324
+                                                  Within R-sq.    =     0.0009
+Number of clusters (county_id_num) =      2,489   Root MSE        =     0.3673
+
+                          (Std. err. adjusted for 2,489 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+   ln_pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+             ddd |  -.0068868   .0151206    -0.46   0.649     -.036537    .0227634
+     post_policy |  -.0002457   .0131451    -0.02   0.985     -.026022    .0255307
+ln_ntl_mean_500m |   .0699869   .0179458     3.90   0.000     .0347966    .1051771
+           _cons |   1.339626    .053662    24.96   0.000     1.234399    1.444852
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     21226       21226           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_ln_1km: reghdfe ln_pharm_1km ddd post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2602 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =    112,775
+Absorbing 2 HDFE groups                           F(   3,   2526) =      10.42
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9089
+                                                  Adj R-squared   =     0.8846
+                                                  Within R-sq.    =     0.0023
+Number of clusters (county_id_num) =      2,527   Root MSE        =     0.3743
+
+                         (Std. err. adjusted for 2,527 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |   .0120875   .0149659     0.81   0.419    -.0172591    .0414341
+    post_policy |    .007701    .014629     0.53   0.599    -.0209851    .0363872
+ln_ntl_mean_1km |   .1185546   .0220846     5.37   0.000     .0752488    .1618604
+          _cons |   2.071324   .0632642    32.74   0.000     1.947269    2.195379
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     23758       23758           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_ln_2km: reghdfe ln_pharm_2km ddd post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2717 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =    121,396
+Absorbing 2 HDFE groups                           F(   3,   2544) =      15.23
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9227
+                                                  Adj R-squared   =     0.9025
+                                                  Within R-sq.    =     0.0042
+Number of clusters (county_id_num) =      2,545   Root MSE        =     0.4015
+
+                         (Std. err. adjusted for 2,545 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |   .0248081    .016004     1.55   0.121     -.006574    .0561903
+    post_policy |   .0172004   .0149729     1.15   0.251    -.0121598    .0465607
+ln_ntl_mean_2km |   .1877818    .029903     6.28   0.000     .1291452    .2464184
+          _cons |   2.733627   .0796759    34.31   0.000     2.577391    2.889863
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     25175       25175           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_pharm_ln_500m did_pharm_ln_1km did_pharm_ln_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_ln.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("500m" "1km" "2km") title("Hospital TWFE main: ln pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_ln.rtf)
+
+. 
+. eststo clear
+
+. eststo did_pharm_ln_500m: reghdfe ln_pharm_500m ddd post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2443 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =     98,036
+Absorbing 2 HDFE groups                           F(   3,   2488) =       3.03
+Statistics robust to heteroskedasticity           Prob > F        =     0.0281
+                                                  R-squared       =     0.8804
+                                                  Adj R-squared   =     0.8468
+                                                  Within R-sq.    =     0.0005
+Number of clusters (county_id_num) =      2,489   Root MSE        =     0.3512
+
+                          (Std. err. adjusted for 2,489 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+   ln_pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+             ddd |  -.0140662   .0131542    -1.07   0.285    -.0398604    .0117281
+     post_policy |  -.0090826   .0184334    -0.49   0.622    -.0452289    .0270638
+ln_ntl_mean_500m |   .0474858   .0171238     2.77   0.006     .0139074    .0810642
+           _cons |   1.415172   .0520444    27.19   0.000     1.313117    1.517227
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     21226       21226           0    *|
+   prov_id#year |       243           1         242     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_ln_1km: reghdfe ln_pharm_1km ddd post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2603 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    112,774
+Absorbing 2 HDFE groups                           F(   3,   2526) =       7.90
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9236
+                                                  Adj R-squared   =     0.9030
+                                                  Within R-sq.    =     0.0016
+Number of clusters (county_id_num) =      2,527   Root MSE        =     0.3432
+
+                         (Std. err. adjusted for 2,527 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |  -.0002303   .0132356    -0.02   0.986     -.026184    .0257235
+    post_policy |   .0089433   .0200876     0.45   0.656    -.0304465    .0483331
+ln_ntl_mean_1km |   .0944563   .0196174     4.81   0.000     .0559884    .1329241
+          _cons |   2.142041     .05731    37.38   0.000     2.029662    2.254421
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     23758       23758           0    *|
+   prov_id#year |       244           1         243     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_ln_2km: reghdfe ln_pharm_2km ddd post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    121,395
+Absorbing 2 HDFE groups                           F(   3,   2544) =      11.80
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9396
+                                                  Adj R-squared   =     0.9237
+                                                  Within R-sq.    =     0.0030
+Number of clusters (county_id_num) =      2,545   Root MSE        =     0.3553
+
+                         (Std. err. adjusted for 2,545 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |   .0099689   .0139712     0.71   0.476    -.0174273     .037365
+    post_policy |   .0265358   .0209428     1.27   0.205    -.0145308    .0676025
+ln_ntl_mean_2km |   .1457932   .0257443     5.66   0.000     .0953112    .1962752
+          _cons |   2.841652   .0692785    41.02   0.000     2.705804      2.9775
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     25175       25175           0    *|
+   prov_id#year |       247           1         246     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_pharm_ln_500m did_pharm_ln_1km did_pharm_ln_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_ln2.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("500m" "1km" "2km") title("Hospital TWFE main: ln pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_ln2.rtf)
+
+. 
+. * Hospital TWFE: annual change in pharmacy count
+. * D. is missing in a hospital's first observed year and across time gaps.
+. eststo clear
+
+. eststo did_dpharm_500m: reghdfe d_pharm_500m ddd post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 4077 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    107,937
+Absorbing 2 HDFE groups                           F(   3,   2494) =       7.38
+Statistics robust to heteroskedasticity           Prob > F        =     0.0001
+                                                  R-squared       =     0.3276
+                                                  Adj R-squared   =     0.1486
+                                                  Within R-sq.    =     0.0016
+Number of clusters (county_id_num) =      2,495   Root MSE        =     2.5345
+
+                          (Std. err. adjusted for 2,495 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+    d_pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+             ddd |   .1068434   .0611834     1.75   0.081    -.0131321     .226819
+     post_policy |   .5081622   .1305345     3.89   0.000     .2521951    .7641294
+ln_ntl_mean_500m |   .0669311   .0840289     0.80   0.426    -.0978425    .2317048
+           _cons |   .0920769   .2515317     0.37   0.714    -.4011556    .5853093
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     22476       22476           0    *|
+   prov_id#year |       217           1         216     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_dpharm_1km: reghdfe d_pharm_1km ddd post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 4077 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    107,937
+Absorbing 2 HDFE groups                           F(   3,   2494) =       8.88
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.4003
+                                                  Adj R-squared   =     0.2407
+                                                  Within R-sq.    =     0.0032
+Number of clusters (county_id_num) =      2,495   Root MSE        =     6.4442
+
+                         (Std. err. adjusted for 2,495 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+    d_pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |   .2832173   .1633052     1.73   0.083    -.0370104    .6034449
+    post_policy |   1.878186   .4378985     4.29   0.000     1.019504    2.736868
+ln_ntl_mean_1km |   .1957058   .2818446     0.69   0.488    -.3569676    .7483793
+          _cons |    .064801   .8237451     0.08   0.937    -1.550494    1.680096
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     22476       22476           0    *|
+   prov_id#year |       217           1         216     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_dpharm_2km: reghdfe d_pharm_2km ddd post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 4077 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    107,937
+Absorbing 2 HDFE groups                           F(   3,   2494) =       9.97
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.4213
+                                                  Adj R-squared   =     0.2673
+                                                  Within R-sq.    =     0.0061
+Number of clusters (county_id_num) =      2,495   Root MSE        =    17.1837
+
+                         (Std. err. adjusted for 2,495 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+    d_pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |   .5236887   .4559015     1.15   0.251    -.3702957    1.417673
+    post_policy |   7.061309   1.451709     4.86   0.000     4.214631    9.907988
+ln_ntl_mean_2km |   .8276722   .8646401     0.96   0.339    -.8678141    2.523158
+          _cons |  -1.901993   2.519759    -0.75   0.450    -6.843028    3.039043
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     22476       22476           0    *|
+   prov_id#year |       217           1         216     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_dpharm_500m did_dpharm_1km did_dpharm_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_change.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("500m" "1km" "2km") title("Hospital TWFE: annual change in pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_main_pharm_change.rtf)
+
+. 
+. *===============================================================================
+. * Pharmacy TWFE event studies: main radii only
+. *===============================================================================
+. 
+. * Hospital TWFE event: pharmacy count
+. eststo clear
+
+. eststo twe_pharm_count_500m: reghdfe pharm_500m ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 6 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(  10,   2566) =       2.89
+Statistics robust to heteroskedasticity           Prob > F        =     0.0014
+                                                  R-squared       =     0.8508
+                                                  Adj R-squared   =     0.8154
+                                                  Within R-sq.    =     0.0008
+Number of clusters (county_id_num) =      2,567   Root MSE        =     2.4722
+
+                          (Std. err. adjusted for 2,567 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+      pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+        ev_le_m4 |   .4695054    .169012     2.78   0.006     .1380917    .8009191
+           ev_m3 |   .5016457   .1555596     3.22   0.001     .1966106    .8066807
+           ev_m2 |    .104447   .0900945     1.16   0.246    -.0722183    .2811122
+            ev_0 |  -.1035545     .07086    -1.46   0.144    -.2425031    .0353941
+           ev_p1 |  -.0473013   .0810912    -0.58   0.560    -.2063121    .1117095
+           ev_p2 |   .0526516   .0861801     0.61   0.541     -.116338    .2216411
+           ev_p3 |   .0556173   .1029767     0.54   0.589    -.1463086    .2575433
+        ev_ge_p4 |    .026262   .1215177     0.22   0.829    -.2120208    .2645447
+     post_policy |   .1013774   .0651093     1.56   0.120    -.0262948    .2290496
+ln_ntl_mean_500m |    .004613   .1256945     0.04   0.971    -.2418598    .2510859
+           _cons |   4.692653   .3488825    13.45   0.000     4.008533    5.376772
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     26553       26553           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. test ev_le_m4 ev_m3 ev_m2
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2566) =    4.28
+            Prob > F =    0.0050
+
+. estadd scalar pretrend_p = r(p)
+
+added scalar:
+         e(pretrend_p) =  .00503247
+
+. coefplot twe_pharm_count_500m, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>     coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital TWFE event: pharmacy count, 500m") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") name(twe_pharm_count_500m, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count_500m.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count_500m.png saved as PNG format
+
+. 
+. eststo twe_pharm_count_1km: reghdfe pharm_1km ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(  10,   2566) =       3.87
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8659
+                                                  Adj R-squared   =     0.8341
+                                                  Within R-sq.    =     0.0018
+Number of clusters (county_id_num) =      2,567   Root MSE        =     6.5014
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       ev_le_m4 |   1.286179    .477946     2.69   0.007     .3489801    2.223378
+          ev_m3 |   1.419942   .4381128     3.24   0.001     .5608519    2.279033
+          ev_m2 |   .0406691   .2654351     0.15   0.878    -.4798197    .5611579
+           ev_0 |   -.564017   .1981476    -2.85   0.004    -.9525625   -.1754715
+          ev_p1 |  -.5836707   .2233103    -2.61   0.009    -1.021557    -.145784
+          ev_p2 |  -.4232836    .234838    -1.80   0.072    -.8837748    .0372077
+          ev_p3 |  -.7365315   .2762172    -2.67   0.008    -1.278163   -.1949003
+       ev_ge_p4 |  -.9516724   .3344379    -2.85   0.004    -1.607468   -.2958768
+    post_policy |   .6274916   .1962324     3.20   0.001     .2427017    1.012281
+ln_ntl_mean_1km |   .0855115   .4471353     0.19   0.848    -.7912711    .9622941
+          _cons |    14.1208   1.205719    11.71   0.000     11.75652    16.48508
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     26553       26553           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. test ev_le_m4 ev_m3 ev_m2
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2566) =    4.98
+            Prob > F =    0.0019
+
+. estadd scalar pretrend_p = r(p)
+
+added scalar:
+         e(pretrend_p) =  .00189899
+
+. coefplot twe_pharm_count_1km, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>     coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital TWFE event: pharmacy count, 1km") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") name(twe_pharm_count_1km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count_1km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count_1km.png saved as PNG format
+
+. 
+. eststo twe_pharm_count_2km: reghdfe pharm_2km ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 7 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(  10,   2566) =       6.67
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8730
+                                                  Adj R-squared   =     0.8429
+                                                  Within R-sq.    =     0.0027
+Number of clusters (county_id_num) =      2,567   Root MSE        =    17.0225
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       ev_le_m4 |   2.423168   1.277789     1.90   0.058    -.0824341    4.928771
+          ev_m3 |   2.914751   1.154133     2.53   0.012     .6516243    5.177877
+          ev_m2 |   -.330329   .7782373    -0.42   0.671    -1.856366    1.195708
+           ev_0 |  -2.145657   .5231653    -4.10   0.000    -3.171526   -1.119788
+          ev_p1 |  -2.097041   .5836468    -3.59   0.000    -3.241507   -.9525742
+          ev_p2 |   -1.51239   .6208143    -2.44   0.015    -2.729738   -.2950424
+          ev_p3 |  -2.760495   .7214862    -3.83   0.000     -4.17525   -1.345741
+       ev_ge_p4 |  -3.809729    .873955    -4.36   0.000    -5.523458   -2.096001
+    post_policy |   2.553224   .5742332     4.45   0.000     1.427216    3.679231
+ln_ntl_mean_2km |  -.4688239   1.468602    -0.32   0.750     -3.34859    2.410942
+          _cons |   40.24628   3.710803    10.85   0.000      32.9698    47.52275
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+-----------------------------------------------------+
+ Absorbed FE | Categories  - Redundant  = Num. Coefs |
+-------------+---------------------------------------|
+ hospital_id |     26553       26553           0    *|
+        year |         8           1           7     |
+-----------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. test ev_le_m4 ev_m3 ev_m2
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2566) =    3.54
+            Prob > F =    0.0140
+
+. estadd scalar pretrend_p = r(p)
+
+added scalar:
+         e(pretrend_p) =  .01400184
+
+. coefplot twe_pharm_count_2km, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>     coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital TWFE event: pharmacy count, 2km") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") name(twe_pharm_count_2km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count_2km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count_2km.png saved as PNG format
+
+. 
+. esttab twe_pharm_count_500m twe_pharm_count_1km twe_pharm_count_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) ///
+>     mtitles("500m" "1km" "2km") stats(N r2_within pretrend_p, labels("Observations" "Within R-squared" "Pretrend p-value")) ///
+>     title("Hospital TWFE event: pharmacy count; main radii only")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_count.rtf)
+
+. 
+. * Hospital TWFE event: ln pharmacy count
+. eststo clear
+
+. eststo twe_pharm_ln_500m: reghdfe ln_pharm_500m ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 post_policy ln_ntl_mean_500m if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2443 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =     98,036
+Absorbing 2 HDFE groups                           F(  10,   2488) =       1.88
+Statistics robust to heteroskedasticity           Prob > F        =     0.0431
+                                                  R-squared       =     0.8804
+                                                  Adj R-squared   =     0.8468
+                                                  Within R-sq.    =     0.0009
+Number of clusters (county_id_num) =      2,489   Root MSE        =     0.3511
+
+                          (Std. err. adjusted for 2,489 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+   ln_pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+        ev_le_m4 |   .0725474   .0432357     1.68   0.093    -.0122342    .1573291
+           ev_m3 |   .0796062    .030033     2.65   0.008     .0207139    .1384984
+           ev_m2 |   .0229114   .0188679     1.21   0.225     -.014087    .0599097
+            ev_0 |   .0073348   .0118368     0.62   0.536    -.0158762    .0305458
+           ev_p1 |   .0023294   .0132204     0.18   0.860    -.0235948    .0282535
+           ev_p2 |   .0119214   .0141515     0.84   0.400    -.0158285    .0396714
+           ev_p3 |   .0072173   .0165846     0.44   0.663    -.0253036    .0397383
+        ev_ge_p4 |   .0184584    .019092     0.97   0.334    -.0189793    .0558962
+     post_policy |  -.0119139    .018796    -0.63   0.526    -.0487713    .0249435
+ln_ntl_mean_500m |   .0474388    .017116     2.77   0.006     .0138756    .0810019
+           _cons |   1.411347   .0522677    27.00   0.000     1.308854    1.513839
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     21226       21226           0    *|
+   prov_id#year |       243           1         242     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. test ev_le_m4 ev_m3 ev_m2
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2488) =    2.37
+            Prob > F =    0.0691
+
+. estadd scalar pretrend_p = r(p)
+
+added scalar:
+         e(pretrend_p) =  .06913513
+
+. coefplot twe_pharm_ln_500m, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>     coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital TWFE event: ln pharmacy count, 500m") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") name(twe_pharm_ln_500m, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln_500m.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln_500m.png saved as PNG format
+
+. 
+. eststo twe_pharm_ln_1km: reghdfe ln_pharm_1km ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 post_policy ln_ntl_mean_1km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2603 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    112,774
+Absorbing 2 HDFE groups                           F(  10,   2526) =       3.52
+Statistics robust to heteroskedasticity           Prob > F        =     0.0001
+                                                  R-squared       =     0.9236
+                                                  Adj R-squared   =     0.9030
+                                                  Within R-sq.    =     0.0018
+Number of clusters (county_id_num) =      2,527   Root MSE        =     0.3432
+
+                         (Std. err. adjusted for 2,527 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       ev_le_m4 |   .0755703   .0449699     1.68   0.093    -.0126114     .163752
+          ev_m3 |    .038283   .0315644     1.21   0.225    -.0236117    .1001777
+          ev_m2 |   .0255906   .0200331     1.28   0.202    -.0136923    .0648735
+           ev_0 |   .0208618   .0121756     1.71   0.087    -.0030133    .0447369
+          ev_p1 |   .0127623   .0137642     0.93   0.354    -.0142279    .0397526
+          ev_p2 |   .0180289   .0143798     1.25   0.210    -.0101684    .0462262
+          ev_p3 |   .0119993   .0162695     0.74   0.461    -.0199037    .0439023
+       ev_ge_p4 |   .0286562   .0186721     1.53   0.125    -.0079579    .0652704
+    post_policy |   .0064289   .0203976     0.32   0.753    -.0335688    .0464267
+ln_ntl_mean_1km |   .0945503   .0196166     4.82   0.000     .0560841    .1330165
+          _cons |   2.138781   .0575001    37.20   0.000     2.026029    2.251533
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     23758       23758           0    *|
+   prov_id#year |       244           1         243     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. test ev_le_m4 ev_m3 ev_m2
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2526) =    1.22
+            Prob > F =    0.3009
+
+. estadd scalar pretrend_p = r(p)
+
+added scalar:
+         e(pretrend_p) =  .3009085
+
+. coefplot twe_pharm_ln_1km, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>     coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital TWFE event: ln pharmacy count, 1km") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") name(twe_pharm_ln_1km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln_1km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln_1km.png saved as PNG format
+
+. 
+. eststo twe_pharm_ln_2km: reghdfe ln_pharm_2km ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 post_policy ln_ntl_mean_2km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    121,395
+Absorbing 2 HDFE groups                           F(  10,   2544) =       4.30
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9397
+                                                  Adj R-squared   =     0.9237
+                                                  Within R-sq.    =     0.0031
+Number of clusters (county_id_num) =      2,545   Root MSE        =     0.3553
+
+                         (Std. err. adjusted for 2,545 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       ev_le_m4 |   .0387732   .0481967     0.80   0.421    -.0557356    .1332819
+          ev_m3 |   .0118329   .0333005     0.36   0.722    -.0534658    .0771317
+          ev_m2 |  -.0059492   .0201974    -0.29   0.768    -.0455541    .0336558
+           ev_0 |   .0114168   .0125083     0.91   0.361    -.0131108    .0359444
+          ev_p1 |   .0071184   .0140709     0.51   0.613    -.0204733    .0347101
+          ev_p2 |   .0185052   .0149429     1.24   0.216    -.0107964    .0478068
+          ev_p3 |   .0170172    .016582     1.03   0.305    -.0154984    .0495328
+       ev_ge_p4 |   .0280351   .0195625     1.43   0.152     -.010325    .0663952
+    post_policy |   .0270248   .0212062     1.27   0.203    -.0145584     .068608
+ln_ntl_mean_2km |   .1457902   .0257439     5.66   0.000     .0953091    .1962713
+          _cons |   2.839751   .0694721    40.88   0.000     2.703524    2.975979
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     25175       25175           0    *|
+   prov_id#year |       247           1         246     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. test ev_le_m4 ev_m3 ev_m2
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2544) =    0.30
+            Prob > F =    0.8231
+
+. estadd scalar pretrend_p = r(p)
+
+added scalar:
+         e(pretrend_p) =  .82310315
+
+. coefplot twe_pharm_ln_2km, keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>     coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital TWFE event: ln pharmacy count, 2km") xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") name(twe_pharm_ln_2km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln_2km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln_2km.png saved as PNG format
+
+. esttab twe_pharm_ln_500m twe_pharm_ln_1km twe_pharm_ln_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) ///
+>     mtitles("500m" "1km" "2km") stats(N r2_within pretrend_p, labels("Observations" "Within R-squared" "Pretrend p-value")) ///
+>     title("Hospital TWFE event: ln pharmacy count; main radii only")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_ln.rtf)
+
+. 
+. * Hospital TWFE event: annual change in pharmacy count
+. eststo clear
+
+. foreach radius in 500m 1km 2km {
+  2.     eststo twe_dpharm_`radius': reghdfe d_pharm_`radius' ///
+>         ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4 ///
+>         post_policy ln_ntl_mean_`radius' if sample_hospital, ///
+>         absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+  3.     test ev_le_m4 ev_m3 ev_m2
+  4.     estadd scalar pretrend_p = r(p)
+  5.     coefplot twe_dpharm_`radius', ///
+>         keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) vertical ///
+>         coeflabels(ev_le_m4="<=-4" ev_m3="-3" ev_m2="-2" ev_0="0" ///
+>             ev_p1="1" ev_p2="2" ev_p3="3" ev_ge_p4=">=4") ///
+>         xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) ///
+>         recast(scatter) ciopts(recast(rcap)) ///
+>         title("Hospital TWFE event: pharmacy-count change, `radius'") ///
+>         xtitle("Years relative to reform; -1 omitted") ytitle("Coefficient") ///
+>         name(twe_dpharm_`radius', replace)
+  6.     graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_change_`radius'.png", replace width(2000)
+  7. }
+(dropped 4077 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    107,937
+Absorbing 2 HDFE groups                           F(  10,   2494) =       3.57
+Statistics robust to heteroskedasticity           Prob > F        =     0.0001
+                                                  R-squared       =     0.3278
+                                                  Adj R-squared   =     0.1487
+                                                  Within R-sq.    =     0.0017
+Number of clusters (county_id_num) =      2,495   Root MSE        =     2.5344
+
+                          (Std. err. adjusted for 2,495 clusters in county_id_num)
+----------------------------------------------------------------------------------
+                 |               Robust
+    d_pharm_500m | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+-----------------+----------------------------------------------------------------
+        ev_le_m4 |  -.2164114   .2783231    -0.78   0.437    -.7621795    .3293568
+           ev_m3 |  -.0168421   .2129497    -0.08   0.937    -.4344185    .4007342
+           ev_m2 |  -.2592737   .1543834    -1.68   0.093    -.5620066    .0434592
+            ev_0 |  -.0608986   .1078973    -0.56   0.573    -.2724761     .150679
+           ev_p1 |   .0082701    .103705     0.08   0.936    -.1950867    .2116269
+           ev_p2 |   .0971788    .100856     0.96   0.335    -.1005913    .2949488
+           ev_p3 |  -.0161951   .1039387    -0.16   0.876    -.2200101    .1876199
+        ev_ge_p4 |   .0840187   .1050197     0.80   0.424     -.121916    .2899534
+     post_policy |   .5194566   .1325291     3.92   0.000     .2595782     .779335
+ln_ntl_mean_500m |   .0667892   .0839402     0.80   0.426    -.0978106    .2313889
+           _cons |   .1024667   .2508301     0.41   0.683      -.38939    .5943233
+----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     22476       22476           0    *|
+   prov_id#year |       217           1         216     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2494) =    1.46
+            Prob > F =    0.2223
+
+added scalar:
+         e(pretrend_p) =  .22230879
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_change_500m.png saved as PNG format
+(dropped 4077 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    107,937
+Absorbing 2 HDFE groups                           F(  10,   2494) =       5.01
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.4007
+                                                  Adj R-squared   =     0.2410
+                                                  Within R-sq.    =     0.0037
+Number of clusters (county_id_num) =      2,495   Root MSE        =     6.4428
+
+                         (Std. err. adjusted for 2,495 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+    d_pharm_1km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       ev_le_m4 |  -1.151647   .8119069    -1.42   0.156    -2.743728     .440434
+          ev_m3 |  -.4851174   .5668025    -0.86   0.392    -1.596569    .6263344
+          ev_m2 |  -1.105244   .4498051    -2.46   0.014    -1.987274   -.2232146
+           ev_0 |  -.3380494   .3035829    -1.11   0.266      -.93335    .2572511
+          ev_p1 |  -.3845349   .3001669    -1.28   0.200    -.9731369     .204067
+          ev_p2 |   .0255591    .291479     0.09   0.930    -.5460065    .5971248
+          ev_p3 |  -.2687911   .2907398    -0.92   0.355    -.8389073    .3013251
+       ev_ge_p4 |   .4600628   .2859062     1.61   0.108    -.1005752    1.020701
+    post_policy |   1.957828   .4452725     4.40   0.000     1.084686    2.830969
+ln_ntl_mean_1km |   .1956436    .281322     0.70   0.487    -.3560051    .7472923
+          _cons |   .0950586   .8197953     0.12   0.908    -1.512491    1.702608
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     22476       22476           0    *|
+   prov_id#year |       217           1         216     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2494) =    2.84
+            Prob > F =    0.0364
+
+added scalar:
+         e(pretrend_p) =  .03644096
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_change_1km.png saved as PNG format
+(dropped 4077 singleton observations)
+(MWFE estimator converged in 11 iterations)
+
+HDFE Linear regression                            Number of obs   =    107,937
+Absorbing 2 HDFE groups                           F(  10,   2494) =       8.17
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.4219
+                                                  Adj R-squared   =     0.2679
+                                                  Within R-sq.    =     0.0070
+Number of clusters (county_id_num) =      2,495   Root MSE        =    17.1761
+
+                         (Std. err. adjusted for 2,495 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+    d_pharm_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+       ev_le_m4 |  -4.682455   2.319306    -2.02   0.044    -9.230418   -.1344925
+          ev_m3 |  -1.712737   1.638641    -1.05   0.296    -4.925973      1.5005
+          ev_m2 |  -2.404256   1.323483    -1.82   0.069    -4.999495    .1909826
+           ev_0 |  -1.384054   .8891595    -1.56   0.120     -3.12762    .3595131
+          ev_p1 |  -1.527946   .9277237    -1.65   0.100    -3.347133    .2912422
+          ev_p2 |   .2543307   .8712207     0.29   0.770     -1.45406    1.962721
+          ev_p3 |  -.9954171   .8626685    -1.15   0.249    -2.687037    .6962032
+       ev_ge_p4 |   1.993418   .8373448     2.38   0.017     .3514557     3.63538
+    post_policy |   7.414152   1.474601     5.03   0.000     4.522585    10.30572
+ln_ntl_mean_2km |   .8258102   .8624039     0.96   0.338    -.8652911    2.516912
+          _cons |  -1.953027   2.513087    -0.78   0.437    -6.880979    2.974926
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     22476       22476           0    *|
+   prov_id#year |       217           1         216     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+ ( 1)  ev_le_m4 = 0
+ ( 2)  ev_m3 = 0
+ ( 3)  ev_m2 = 0
+
+       F(  3,  2494) =    2.50
+            Prob > F =    0.0580
+
+added scalar:
+         e(pretrend_p) =  .05800165
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_change_2km.png saved as PNG format
+
+. esttab twe_dpharm_500m twe_dpharm_1km twe_dpharm_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_change.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons ///
+>     keep(ev_le_m4 ev_m3 ev_m2 ev_0 ev_p1 ev_p2 ev_p3 ev_ge_p4) ///
+>     mtitles("500m" "1km" "2km") ///
+>     stats(N r2_within pretrend_p, labels("Observations" "Within R-squared" "Pretrend p-value")) ///
+>     title("Hospital TWFE event: annual change in pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_event_pharm_change.rtf)
+
+. 
+. *===============================================================================
+. * Pharmacy radius robustness: static TWFE only
+. *===============================================================================
+. 
+. * Hospital TWFE robustness: pharmacy count
+. eststo clear
+
+. eststo did_pharm_count_3km: reghdfe pharm_3km ddd post_policy ln_ntl_mean_3km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =      21.33
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8992
+                                                  Adj R-squared   =     0.8750
+                                                  Within R-sq.    =     0.0058
+Number of clusters (county_id_num) =      2,567   Root MSE        =    27.1160
+
+                         (Std. err. adjusted for 2,567 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+      pharm_3km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |  -6.447846   .9578284    -6.73   0.000    -8.326041   -4.569651
+    post_policy |   9.398688   1.807885     5.20   0.000     5.853627    12.94375
+ln_ntl_mean_3km |  -7.358284   2.583102    -2.85   0.004    -12.42346   -2.293109
+          _cons |    80.9368    6.09987    13.27   0.000     68.97564    92.89797
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     26553       26553           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_count_1_2km: reghdfe pharm_1_2km ddd post_policy ln_ntl_mean_1_2km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =      19.14
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.8902
+                                                  Adj R-squared   =     0.8639
+                                                  Within R-sq.    =     0.0046
+Number of clusters (county_id_num) =      2,567   Root MSE        =    11.0382
+
+                           (Std. err. adjusted for 2,567 clusters in county_id_num)
+-----------------------------------------------------------------------------------
+                  |               Robust
+      pharm_1_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+              ddd |  -2.539244    .407456    -6.23   0.000     -3.33822   -1.740269
+      post_policy |   3.335465   .6508593     5.12   0.000     2.059202    4.611727
+ln_ntl_mean_1_2km |  -2.272065   .8841722    -2.57   0.010    -4.005829   -.5383018
+            _cons |   29.64241   2.225302    13.32   0.000     25.27884    34.00598
+-----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     26553       26553           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_count_2_3km: reghdfe pharm_2_3km ddd post_policy ln_ntl_mean_2_3km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2718 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    138,567
+Absorbing 2 HDFE groups                           F(   3,   2566) =      24.06
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9020
+                                                  Adj R-squared   =     0.8785
+                                                  Within R-sq.    =     0.0090
+Number of clusters (county_id_num) =      2,567   Root MSE        =    13.4654
+
+                           (Std. err. adjusted for 2,567 clusters in county_id_num)
+-----------------------------------------------------------------------------------
+                  |               Robust
+      pharm_2_3km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+              ddd |  -2.712656   .4484029    -6.05   0.000    -3.591924   -1.833388
+      post_policy |   5.237509   .9086635     5.76   0.000     3.455721    7.019298
+ln_ntl_mean_2_3km |  -6.486059    1.21602    -5.33   0.000    -8.870538   -4.101579
+            _cons |   40.59205    2.84981    14.24   0.000     35.00389    46.18021
+-----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     26553       26553           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_pharm_count_3km did_pharm_count_1_2km did_pharm_count_2_3km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_robustness_pharm_count.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("3km" "1-2km" "2-3km") title("Hospital TWFE robustness: pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_robustness_pharm_count.rtf)
+
+. 
+. * Hospital TWFE robustness: ln pharmacy count
+. eststo clear
+
+. eststo did_pharm_ln_3km: reghdfe ln_pharm_3km ddd post_policy ln_ntl_mean_3km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2738 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    124,635
+Absorbing 2 HDFE groups                           F(   3,   2547) =       9.66
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9450
+                                                  Adj R-squared   =     0.9306
+                                                  Within R-sq.    =     0.0027
+Number of clusters (county_id_num) =      2,548   Root MSE        =     0.3648
+
+                         (Std. err. adjusted for 2,548 clusters in county_id_num)
+---------------------------------------------------------------------------------
+                |               Robust
+   ln_pharm_3km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+----------------+----------------------------------------------------------------
+            ddd |   .0010082   .0142152     0.07   0.943    -.0268663    .0288827
+    post_policy |   .0193131    .022402     0.86   0.389    -.0246149    .0632411
+ln_ntl_mean_3km |   .1581194   .0304002     5.20   0.000     .0985079     .217731
+          _cons |   3.267791   .0760495    42.97   0.000     3.118666    3.416917
+---------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     25670       25670           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_ln_1_2km: reghdfe ln_pharm_1_2km ddd post_policy ln_ntl_mean_1_2km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2556 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    111,418
+Absorbing 2 HDFE groups                           F(   3,   2471) =       8.13
+Statistics robust to heteroskedasticity           Prob > F        =     0.0000
+                                                  R-squared       =     0.9368
+                                                  Adj R-squared   =     0.9199
+                                                  Within R-sq.    =     0.0021
+Number of clusters (county_id_num) =      2,472   Root MSE        =     0.3436
+
+                           (Std. err. adjusted for 2,472 clusters in county_id_num)
+-----------------------------------------------------------------------------------
+                  |               Robust
+   ln_pharm_1_2km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+              ddd |  -.0002905   .0131651    -0.02   0.982    -.0261064    .0255253
+      post_policy |   .0226379   .0208375     1.09   0.277    -.0182229    .0634986
+ln_ntl_mean_1_2km |   .1180089   .0250472     4.71   0.000     .0688931    .1671246
+            _cons |   2.570777    .070604    36.41   0.000     2.432328    2.709226
+-----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     23165       23165           0    *|
+   prov_id#year |       247           1         246     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. eststo did_pharm_ln_2_3km: reghdfe ln_pharm_2_3km ddd post_policy ln_ntl_mean_2_3km if sample_hospital, ///
+>     absorb(hospital_id prov_id#year) vce(cluster county_id_num)
+(dropped 2427 singleton observations)
+(MWFE estimator converged in 10 iterations)
+
+HDFE Linear regression                            Number of obs   =    104,927
+Absorbing 2 HDFE groups                           F(   3,   2298) =       3.86
+Statistics robust to heteroskedasticity           Prob > F        =     0.0090
+                                                  R-squared       =     0.9487
+                                                  Adj R-squared   =     0.9350
+                                                  Within R-sq.    =     0.0012
+Number of clusters (county_id_num) =      2,299   Root MSE        =     0.3499
+
+                           (Std. err. adjusted for 2,299 clusters in county_id_num)
+-----------------------------------------------------------------------------------
+                  |               Robust
+   ln_pharm_2_3km | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+              ddd |  -.0059664   .0138478    -0.43   0.667    -.0331219    .0211892
+      post_policy |   .0032703   .0241261     0.14   0.892     -.044041    .0505816
+ln_ntl_mean_2_3km |   .1046508   .0313634     3.34   0.001     .0431472    .1661544
+            _cons |   2.634319   .0856682    30.75   0.000     2.466324    2.802314
+-----------------------------------------------------------------------------------
+
+Absorbed degrees of freedom:
+--------------------------------------------------------+
+    Absorbed FE | Categories  - Redundant  = Num. Coefs |
+----------------+---------------------------------------|
+    hospital_id |     21863       21863           0    *|
+   prov_id#year |       248           1         247     |
+--------------------------------------------------------+
+* = FE nested within cluster; treated as redundant for DoF computation
+
+. esttab did_pharm_ln_3km did_pharm_ln_1_2km did_pharm_ln_2_3km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_robustness_pharm_ln.rtf", replace ///
+>     label se b(%9.3f) star(* 0.10 ** 0.05 *** 0.01) nocons keep(ddd post_policy) ///
+>     mtitles("3km" "1-2km" "2-3km") title("Hospital TWFE robustness: ln pharmacy count")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\twfe_robustness_pharm_ln.rtf)
+
+. 
+. *===============================================================================
+. * Pharmacy CSDID: main radii and radius robustness
+. *===============================================================================
+. 
+. * Hospital CSDID pharmacy count
+. eststo clear
+
+. csdid pharm_500m ln_ntl_mean_500m if sample_hospital, ivar(hospital_id) time(year) gvar(g_csdid) ///
+>     method(dripw) notyet vce(cluster county_id_num)
+Panel is not balanced
+Will use observations with Pair balanced (observed at t0 and t1)
+...................................
+Difference-in-difference with Multiple Time Periods
+
+                                                       Number of obs = 113,476
+Outcome model  : least squares
+Treatment model: inverse probability
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+g2013        |
+ t_2012_2013 |  -.4469021   .4076494    -1.10   0.273     -1.24588    .3520761
+ t_2012_2014 |  -.3212852   .4840291    -0.66   0.507    -1.269965    .6273943
+ t_2012_2015 |   .2026124   .3729356     0.54   0.587    -.5283279    .9335526
+ t_2012_2016 |   .0723732   .3998199     0.18   0.856    -.7112595    .8560058
+ t_2012_2017 |   -.123643   .4247725    -0.29   0.771    -.9561817    .7088957
+ t_2012_2018 |  -.3921608   .4676333    -0.84   0.402    -1.308705    .5243836
+ t_2012_2019 |  -.6763623    .423951    -1.60   0.111    -1.507291    .1545664
+-------------+----------------------------------------------------------------
+g2014        |
+ t_2012_2013 |  -.8544276   .3611096    -2.37   0.018    -1.562189   -.1466657
+ t_2013_2014 |   .0849951   .1969206     0.43   0.666    -.3009623    .4709524
+ t_2013_2015 |   .6099008   .2811955     2.17   0.030     .0587677    1.161034
+ t_2013_2016 |   .1407033    .306008     0.46   0.646    -.4590613    .7404679
+ t_2013_2017 |  -.2256075   .3446411    -0.65   0.513    -.9010916    .4498765
+ t_2013_2018 |  -.2296977   .4075483    -0.56   0.573    -1.028478    .5690822
+ t_2013_2019 |  -.0501103   .4436989    -0.11   0.910    -.9197441    .8195236
+-------------+----------------------------------------------------------------
+g2015        |
+ t_2012_2013 |  -1.018406   .2040986    -4.99   0.000    -1.418432     -.61838
+ t_2013_2014 |   .4373009   .1231046     3.55   0.000     .1960203    .6785815
+ t_2014_2015 |   .4904054   .1016985     4.82   0.000     .2910799    .6897309
+ t_2014_2016 |    .377894   .1278807     2.96   0.003     .1272524    .6285356
+ t_2014_2017 |   .2615994   .1486426     1.76   0.078    -.0297347    .5529336
+ t_2014_2018 |   .2435163   .1652451     1.47   0.141    -.0803581    .5673906
+ t_2014_2019 |   .2254827   .1766897     1.28   0.202    -.1208228    .5717883
+-------------+----------------------------------------------------------------
+g2016        |
+ t_2012_2013 |   .3764759   .3104102     1.21   0.225    -.2319169    .9848686
+ t_2013_2014 |   .0047785   .1059827     0.05   0.964    -.2029437    .2125007
+ t_2014_2015 |  -.6493987   .2190639    -2.96   0.003    -1.078756   -.2200413
+ t_2015_2016 |  -.0604476   .1026987    -0.59   0.556    -.2617334    .1408382
+ t_2015_2017 |   .0506398   .1340466     0.38   0.706    -.2120867    .3133662
+ t_2015_2018 |   .2279789   .1646838     1.38   0.166    -.0947955    .5507533
+ t_2015_2019 |  -.0038931   .1947004    -0.02   0.984    -.3854989    .3777127
+-------------+----------------------------------------------------------------
+g2017        |
+ t_2012_2013 |   .1825128   .2197888     0.83   0.406    -.2482654     .613291
+ t_2013_2014 |   .0549466   .0906125     0.61   0.544    -.1226506    .2325439
+ t_2014_2015 |  -.4240456   .1729934    -2.45   0.014    -.7631064   -.0849849
+ t_2015_2016 |  -.1497419   .0652196    -2.30   0.022      -.27757   -.0219137
+ t_2016_2017 |  -.0140735   .0386679    -0.36   0.716    -.0898613    .0617142
+ t_2016_2018 |    .037406   .0625372     0.60   0.550    -.0851648    .1599767
+ t_2016_2019 |   .0480215   .0781769     0.61   0.539    -.1052024    .2012454
+------------------------------------------------------------------------------
+Control: Not yet Treated
+
+See Callaway and Sant'Anna (2021) for details
+
+. capture noisily estat pretrend
+Pretrend Test. H0 All Pre-treatment are equal to 0
+chi2(10) =    63.0104
+p-value  =     0.0000
+
+. estat simple, estore(cs_pharm_count_500m)
+Average Treatment Effect on Treated
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         ATT |   .0720859   .0634255     1.14   0.256    -.0522258    .1963975
+------------------------------------------------------------------------------
+
+. 
+. estat event, window(-4 4) estore(cse_pharm_count_500m)
+ATT by Periods Before and After treatment
+Event Study:Dynamic effects
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     Pre_avg |  -.0770064   .0592744    -1.30   0.194    -.1931821    .0391694
+    Post_avg |   .0921295   .0767765     1.20   0.230    -.0583497    .2426086
+         Tm4 |   .1825128   .2197888     0.83   0.406    -.2482654     .613291
+         Tm3 |   .1643029   .1210867     1.36   0.175    -.0730227    .4016285
+         Tm2 |  -.5531831   .1086586    -5.09   0.000      -.76615   -.3402162
+         Tm1 |   -.101658   .0609671    -1.67   0.095    -.2211513    .0178352
+         Tp0 |   .0481281   .0399311     1.21   0.228    -.0301354    .1263916
+         Tp1 |   .0982154   .0567018     1.73   0.083    -.0129182    .2093489
+         Tp2 |   .1433781   .0671029     2.14   0.033     .0118588    .2748975
+         Tp3 |   .0951165   .1203714     0.79   0.429     -.140807    .3310401
+         Tp4 |   .0758091   .1650815     0.46   0.646    -.2477447    .3993629
+------------------------------------------------------------------------------
+
+. coefplot cse_pharm_count_500m, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+>     coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital CSDID pharmacy count, 500m") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") name(cse_pharm_count_500m, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count_500m.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count_500m.png saved as PNG format
+
+. 
+. csdid pharm_1km ln_ntl_mean_1km if sample_hospital, ivar(hospital_id) time(year) gvar(g_csdid) ///
+>     method(dripw) notyet vce(cluster county_id_num)
+Panel is not balanced
+Will use observations with Pair balanced (observed at t0 and t1)
+...................................
+Difference-in-difference with Multiple Time Periods
+
+                                                       Number of obs = 113,476
+Outcome model  : least squares
+Treatment model: inverse probability
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+g2013        |
+ t_2012_2013 |   -2.18634    1.01072    -2.16   0.031    -4.167315   -.2053657
+ t_2012_2014 |  -2.233381   1.201119    -1.86   0.063    -4.587531      .12077
+ t_2012_2015 |  -.1471295   .9129648    -0.16   0.872    -1.936508    1.642249
+ t_2012_2016 |  -.6703167   1.000842    -0.67   0.503    -2.631931    1.291298
+ t_2012_2017 |  -1.544614   1.108838    -1.39   0.164    -3.717896     .628669
+ t_2012_2018 |  -2.538622   1.263618    -2.01   0.045    -5.015267   -.0619776
+ t_2012_2019 |  -3.434505   1.080921    -3.18   0.001     -5.55307   -1.315939
+-------------+----------------------------------------------------------------
+g2014        |
+ t_2012_2013 |  -2.626735   .8958752    -2.93   0.003    -4.382619   -.8708523
+ t_2013_2014 |   .0917902   .4881829     0.19   0.851    -.8650306    1.048611
+ t_2013_2015 |   1.356781   .7615103     1.78   0.075    -.1357522    2.849313
+ t_2013_2016 |   .0549395    .701011     0.08   0.938    -1.319017    1.428896
+ t_2013_2017 |  -.9771636   .7868612    -1.24   0.214    -2.519383    .5650559
+ t_2013_2018 |  -1.356598   .8550492    -1.59   0.113    -3.032464    .3192675
+ t_2013_2019 |  -.6143372   .9713251    -0.63   0.527    -2.518099    1.289425
+-------------+----------------------------------------------------------------
+g2015        |
+ t_2012_2013 |  -3.635419    .540463    -6.73   0.000    -4.694707   -2.576131
+ t_2013_2014 |   1.078645   .2850805     3.78   0.000     .5198973    1.637392
+ t_2014_2015 |   2.177857   .2495894     8.73   0.000     1.688671    2.667043
+ t_2014_2016 |   1.549027   .2900735     5.34   0.000     .9804935    2.117561
+ t_2014_2017 |   .8883418   .3351933     2.65   0.008      .231375    1.545309
+ t_2014_2018 |   .2770519   .3665849     0.76   0.450    -.4414413    .9955451
+ t_2014_2019 |   .4902986   .3972569     1.23   0.217    -.2883106    1.268908
+-------------+----------------------------------------------------------------
+g2016        |
+ t_2012_2013 |  -.0389578   .7741708    -0.05   0.960    -1.556305    1.478389
+ t_2013_2014 |   -.096112   .2549492    -0.38   0.706    -.5958031    .4035792
+ t_2014_2015 |  -1.593307   .5832724    -2.73   0.006    -2.736499   -.4501137
+ t_2015_2016 |  -.2040916   .2074067    -0.98   0.325    -.6106012    .2024179
+ t_2015_2017 |  -.3747101   .2839743    -1.32   0.187    -.9312895    .1818694
+ t_2015_2018 |  -.3596171   .3569766    -1.01   0.314    -1.059278    .3400441
+ t_2015_2019 |  -1.272694   .4121827    -3.09   0.002    -2.080558   -.4648312
+-------------+----------------------------------------------------------------
+g2017        |
+ t_2012_2013 |   .5743844   .5752241     1.00   0.318    -.5530342    1.701803
+ t_2013_2014 |   .3064398   .2213632     1.38   0.166     -.127424    .7403036
+ t_2014_2015 |  -1.174596   .5119738    -2.29   0.022    -2.178046   -.1711461
+ t_2015_2016 |  -.1976183   .1579132    -1.25   0.211    -.5071224    .1118858
+ t_2016_2017 |  -.1761453    .084685    -2.08   0.038     -.342125   -.0101657
+ t_2016_2018 |  -.1223054   .1403241    -0.87   0.383    -.3973355    .1527248
+ t_2016_2019 |  -.0719905   .1745908    -0.41   0.680    -.4141822    .2702013
+------------------------------------------------------------------------------
+Control: Not yet Treated
+
+See Callaway and Sant'Anna (2021) for details
+
+. capture noisily estat pretrend
+Pretrend Test. H0 All Pre-treatment are equal to 0
+chi2(10) =    81.5286
+p-value  =     0.0000
+
+. estat simple, estore(cs_pharm_count_1km)
+Average Treatment Effect on Treated
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         ATT |  -.0841982   .1536663    -0.55   0.584    -.3853786    .2169821
+------------------------------------------------------------------------------
+
+. estat event, window(-4 4) estore(cse_pharm_count_1km)
+ATT by Periods Before and After treatment
+Event Study:Dynamic effects
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     Pre_avg |  -.3180449   .1550299    -2.05   0.040     -.621898   -.0141918
+    Post_avg |  -.1009397   .1836162    -0.55   0.583     -.460821    .2589415
+         Tm4 |   .5743844   .5752241     1.00   0.318    -.5530342    1.701803
+         Tm3 |   .1889656   .3000061     0.63   0.529    -.3990356    .7769667
+         Tm2 |  -1.856496   .3033657    -6.12   0.000    -2.451082   -1.261911
+         Tm1 |  -.1790331   .1511013    -1.18   0.236    -.4751863    .1171201
+         Tp0 |   .1377294   .0938013     1.47   0.142    -.0461178    .3215766
+         Tp1 |   .0628945   .1318784     0.48   0.633    -.1955824    .3213714
+         Tp2 |   .0702786   .1527167     0.46   0.645    -.2290406    .3695977
+         Tp3 |  -.4996537   .2757233    -1.81   0.070    -1.040061    .0407541
+         Tp4 |  -.2759474   .3998806    -0.69   0.490    -1.059699    .5078042
+------------------------------------------------------------------------------
+
+. coefplot cse_pharm_count_1km, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+>     coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital CSDID pharmacy count, 1km") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") name(cse_pharm_count_1km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count_1km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count_1km.png saved as PNG format
+
+. 
+. csdid pharm_2km ln_ntl_mean_2km if sample_hospital, ivar(hospital_id) time(year) gvar(g_csdid) ///
+>     method(dripw) notyet vce(cluster county_id_num)
+Panel is not balanced
+Will use observations with Pair balanced (observed at t0 and t1)
+...................................
+Difference-in-difference with Multiple Time Periods
+
+                                                       Number of obs = 113,476
+Outcome model  : least squares
+Treatment model: inverse probability
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+g2013        |
+ t_2012_2013 |  -9.218733   1.738603    -5.30   0.000    -12.62633   -5.811133
+ t_2012_2014 |  -10.13956   2.027782    -5.00   0.000    -14.11394   -6.165175
+ t_2012_2015 |  -2.340323   1.620836    -1.44   0.149    -5.517102    .8364571
+ t_2012_2016 |  -3.859093   1.753234    -2.20   0.028    -7.295368   -.4228182
+ t_2012_2017 |  -6.256877   1.970771    -3.17   0.001    -10.11952   -2.394237
+ t_2012_2018 |  -9.534162   2.284427    -4.17   0.000    -14.01156   -5.056768
+ t_2012_2019 |  -9.920037   2.258519    -4.39   0.000    -14.34665   -5.493421
+-------------+----------------------------------------------------------------
+g2014        |
+ t_2012_2013 |  -6.789495   2.410069    -2.82   0.005    -11.51314   -2.065847
+ t_2013_2014 |   1.011954   1.155026     0.88   0.381    -1.251855    3.275762
+ t_2013_2015 |   4.465825   1.962148     2.28   0.023     .6200844    8.311565
+ t_2013_2016 |   2.624162   1.596215     1.64   0.100    -.5043615    5.752685
+ t_2013_2017 |   -.063288   1.789606    -0.04   0.972    -3.570852    3.444276
+ t_2013_2018 |  -.7658465   1.969483    -0.39   0.697    -4.625963     3.09427
+ t_2013_2019 |    .046821   2.078284     0.02   0.982    -4.026541    4.120183
+-------------+----------------------------------------------------------------
+g2015        |
+ t_2012_2013 |  -10.39462   1.423918    -7.30   0.000    -13.18544   -7.603787
+ t_2013_2014 |   2.680179   .7161963     3.74   0.000      1.27646    4.083898
+ t_2014_2015 |   7.034392   .7476974     9.41   0.000     5.568932    8.499852
+ t_2014_2016 |   5.101836   .7748289     6.58   0.000       3.5832    6.620473
+ t_2014_2017 |   3.119013   .8923384     3.50   0.000     1.370062    4.867964
+ t_2014_2018 |   .6509941   .9344152     0.70   0.486    -1.180426    2.482414
+ t_2014_2019 |   .8881126   .9586779     0.93   0.354    -.9908616    2.767087
+-------------+----------------------------------------------------------------
+g2016        |
+ t_2012_2013 |  -.0770817    1.96401    -0.04   0.969     -3.92647    3.772307
+ t_2013_2014 |  -.3041241   .6248493    -0.49   0.626    -1.528806    .9205581
+ t_2014_2015 |  -4.261199   1.724634    -2.47   0.013    -7.641419   -.8809785
+ t_2015_2016 |    .112335    .516136     0.22   0.828    -.8992729    1.123943
+ t_2015_2017 |  -.1137641   .7615356    -0.15   0.881    -1.606347    1.378818
+ t_2015_2018 |  -.1324229   .9936033    -0.13   0.894     -2.07985    1.815004
+ t_2015_2019 |  -2.828108   1.198985    -2.36   0.018    -5.178076   -.4781402
+-------------+----------------------------------------------------------------
+g2017        |
+ t_2012_2013 |   1.468624   1.405734     1.04   0.296    -1.286565    4.223812
+ t_2013_2014 |   .3077322   .4925779     0.62   0.532    -.6577028    1.273167
+ t_2014_2015 |  -2.103516   1.321865    -1.59   0.112    -4.694324    .4872927
+ t_2015_2016 |  -.5194233   .3420122    -1.52   0.129    -1.189755    .1509084
+ t_2016_2017 |  -.7010919    .189594    -3.70   0.000    -1.072689   -.3294946
+ t_2016_2018 |  -.3892066   .3459507    -1.13   0.261    -1.067258    .2888443
+ t_2016_2019 |  -.6347878   .4273405    -1.49   0.137     -1.47236    .2027842
+------------------------------------------------------------------------------
+Control: Not yet Treated
+
+See Callaway and Sant'Anna (2021) for details
+
+. capture noisily estat pretrend
+Pretrend Test. H0 All Pre-treatment are equal to 0
+chi2(10) =    82.8762
+p-value  =     0.0000
+
+. estat simple, estore(cs_pharm_count_2km)
+Average Treatment Effect on Treated
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         ATT |  -.2477285   .3431279    -0.72   0.470    -.9202469    .4247898
+------------------------------------------------------------------------------
+
+. estat event, window(-4 4) estore(cse_pharm_count_2km)
+ATT by Periods Before and After treatment
+Event Study:Dynamic effects
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     Pre_avg |  -.9152178   .3810137    -2.40   0.016    -1.661991   -.1684447
+    Post_avg |  -.3164943    .412231    -0.77   0.443    -1.124452    .4914636
+         Tm4 |   1.468624   1.405734     1.04   0.296    -1.286565    4.223812
+         Tm3 |    .176852   .7410541     0.24   0.811    -1.275587    1.629291
+         Tm2 |  -4.788488   .7874694    -6.08   0.000      -6.3319   -3.245077
+         Tm1 |  -.5178587   .3920628    -1.32   0.187    -1.286288    .2505704
+         Tp0 |   .3903241    .222675     1.75   0.080     -.046111    .8267591
+         Tp1 |   .2376639     .31224     0.76   0.447    -.3743153     .849643
+         Tp2 |   .2509394   .3756591     0.67   0.504     -.485339    .9872177
+         Tp3 |  -1.295106   .6657367    -1.95   0.052    -2.599925    .0097144
+         Tp4 |  -1.166293   .8491231    -1.37   0.170    -2.830544    .4979575
+------------------------------------------------------------------------------
+
+. coefplot cse_pharm_count_2km, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+>     coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital CSDID pharmacy count, 2km") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") name(cse_pharm_count_2km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count_2km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count_2km.png saved as PNG format
+
+. esttab cs_pharm_count_500m cs_pharm_count_1km cs_pharm_count_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_att_pharm_count.rtf", replace se b(%9.3f) ///
+>     star(* 0.10 ** 0.05 *** 0.01) nocons keep(ATT) mtitles("500m" "1km" "2km") title("Hospital CSDID pharmacy count: overall ATT")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_att_pharm_count.rtf)
+
+. esttab cse_pharm_count_500m cse_pharm_count_1km cse_pharm_count_2km using "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count.rtf", replace se b(%9.3f) ///
+>     star(* 0.10 ** 0.05 *** 0.01) nocons keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) ///
+>     mtitles("500m" "1km" "2km") title("Hospital CSDID pharmacy count: event study")
+(output written to D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_count.rtf)
+
+. 
+. * Hospital CSDID ln pharmacy count
+. eststo clear
+
+. csdid ln_pharm_500m ln_ntl_mean_500m if sample_hospital, ivar(hospital_id) time(year) gvar(g_csdid) ///
+>     method(dripw) notyet vce(cluster county_id_num)
+Panel is not balanced
+Will use observations with Pair balanced (observed at t0 and t1)
+...................................
+Difference-in-difference with Multiple Time Periods
+
+                                                        Number of obs = 75,699
+Outcome model  : least squares
+Treatment model: inverse probability
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+g2013        |
+ t_2012_2013 |   .1452906   .1590273     0.91   0.361    -.1663971    .4569784
+ t_2012_2014 |   .4072239   .2097928     1.94   0.052    -.0039625    .8184103
+ t_2012_2015 |   .6958306   .2289457     3.04   0.002     .2471053    1.144556
+ t_2012_2016 |   .7318391   .2107392     3.47   0.001     .3187978     1.14488
+ t_2012_2017 |   .9215637   .2055778     4.48   0.000     .5186387    1.324489
+ t_2012_2018 |    .875939   .1985597     4.41   0.000     .4867692    1.265109
+ t_2012_2019 |   .9499453   .1975538     4.81   0.000     .5627469    1.337144
+-------------+----------------------------------------------------------------
+g2014        |
+ t_2012_2013 |   .2687294   .1740064     1.54   0.122    -.0723168    .6097755
+ t_2013_2014 |   .0774485   .0696783     1.11   0.266    -.0591185    .2140156
+ t_2013_2015 |   .0863137    .097288     0.89   0.375    -.1043673    .2769947
+ t_2013_2016 |   .0011264   .1024239     0.01   0.991    -.1996208    .2018736
+ t_2013_2017 |  -.0107144    .109593    -0.10   0.922    -.2255127     .204084
+ t_2013_2018 |   .0237023   .1125811     0.21   0.833    -.1969526    .2443572
+ t_2013_2019 |    .042606   .1269802     0.34   0.737    -.2062707    .2914828
+-------------+----------------------------------------------------------------
+g2015        |
+ t_2012_2013 |  -.6037964   .0995914    -6.06   0.000     -.798992   -.4086008
+ t_2013_2014 |   .0670776    .029131     2.30   0.021     .0099819    .1241734
+ t_2014_2015 |   .0551067   .0242705     2.27   0.023     .0075373    .1026761
+ t_2014_2016 |   .0441923   .0276826     1.60   0.110    -.0100646    .0984492
+ t_2014_2017 |  -.0218578   .0297253    -0.74   0.462    -.0801184    .0364028
+ t_2014_2018 |  -.0043626   .0318906    -0.14   0.891    -.0668671    .0581419
+ t_2014_2019 |   -.014492   .0332879    -0.44   0.663    -.0797352    .0507511
+-------------+----------------------------------------------------------------
+g2016        |
+ t_2012_2013 |   .1188786   .1316033     0.90   0.366    -.1390591    .3768163
+ t_2013_2014 |   -.003181   .0297727    -0.11   0.915    -.0615345    .0551725
+ t_2014_2015 |  -.1115169    .040945    -2.72   0.006    -.1917677   -.0312662
+ t_2015_2016 |   .0394717   .0250462     1.58   0.115     -.009618    .0885613
+ t_2015_2017 |   .0619016   .0290838     2.13   0.033     .0048983    .1189048
+ t_2015_2018 |   .0773965   .0316518     2.45   0.014     .0153601    .1394329
+ t_2015_2019 |   .0320231    .038265     0.84   0.403    -.0429749    .1070211
+-------------+----------------------------------------------------------------
+g2017        |
+ t_2012_2013 |     .28883   .1404744     2.06   0.040     .0135053    .5641546
+ t_2013_2014 |   .0152845   .0253855     0.60   0.547    -.0344702    .0650392
+ t_2014_2015 |  -.0598484   .0309404    -1.93   0.053    -.1204904    .0007936
+ t_2015_2016 |  -.0179506   .0177029    -1.01   0.311    -.0526477    .0167465
+ t_2016_2017 |  -.0220898   .0098611    -2.24   0.025    -.0414173   -.0027624
+ t_2016_2018 |  -.0368026   .0128851    -2.86   0.004     -.062057   -.0115482
+ t_2016_2019 |   -.034209   .0167317    -2.04   0.041    -.0670025   -.0014154
+------------------------------------------------------------------------------
+Control: Not yet Treated
+
+See Callaway and Sant'Anna (2021) for details
+
+. capture noisily estat pretrend
+Pretrend Test. H0 All Pre-treatment are equal to 0
+chi2(10) =    61.3428
+p-value  =     0.0000
+
+. estat simple, estore(cs_pharm_ln_500m)
+Average Treatment Effect on Treated
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         ATT |   .0136475   .0117854     1.16   0.247    -.0094515    .0367465
+------------------------------------------------------------------------------
+
+. estat event, window(-4 4) estore(cse_pharm_ln_500m)
+ATT by Periods Before and After treatment
+Event Study:Dynamic effects
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     Pre_avg |   .0478748   .0350721     1.37   0.172    -.0208652    .1166149
+    Post_avg |   .0167423    .015264     1.10   0.273    -.0131745    .0466592
+         Tm4 |     .28883   .1404744     2.06   0.040     .0135053    .5641546
+         Tm3 |   .0308946   .0293865     1.05   0.293    -.0267019    .0884911
+         Tm2 |   -.117255   .0250292    -4.68   0.000    -.1663113   -.0681987
+         Tm1 |  -.0109703    .014666    -0.75   0.454    -.0397151    .0177746
+         Tp0 |   .0059398   .0088917     0.67   0.504    -.0114876    .0233672
+         Tp1 |   .0034531   .0112674     0.31   0.759    -.0186306    .0255369
+         Tp2 |   .0029925   .0139563     0.21   0.830    -.0243614    .0303464
+         Tp3 |   .0310812    .025147     1.24   0.216    -.0182061    .0803684
+         Tp4 |   .0402451   .0356252     1.13   0.259     -.029579    .1100693
+------------------------------------------------------------------------------
+
+. coefplot cse_pharm_ln_500m, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+>     coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital CSDID ln pharmacy count, 500m") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") name(cse_pharm_ln_500m, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_ln_500m.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_ln_500m.png saved as PNG format
+
+. 
+. csdid ln_pharm_1km ln_ntl_mean_1km if sample_hospital, ivar(hospital_id) time(year) gvar(g_csdid) ///
+>     method(dripw) notyet vce(cluster county_id_num)
+Panel is not balanced
+Will use observations with Pair balanced (observed at t0 and t1)
+...................................
+Difference-in-difference with Multiple Time Periods
+
+                                                        Number of obs = 88,353
+Outcome model  : least squares
+Treatment model: inverse probability
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+g2013        |
+ t_2012_2013 |   -.246617   .2417983    -1.02   0.308     -.720533     .227299
+ t_2012_2014 |   .0043742   .2858997     0.02   0.988     -.555979    .5647274
+ t_2012_2015 |    .735343   .2570963     2.86   0.004     .2314436    1.239242
+ t_2012_2016 |   .6267131   .2269062     2.76   0.006     .1819851    1.071441
+ t_2012_2017 |   .6185749   .2282552     2.71   0.007     .1712029    1.065947
+ t_2012_2018 |   .6373617   .2362257     2.70   0.007     .1743677    1.100356
+ t_2012_2019 |   .8053694   .2430737     3.31   0.001     .3289537    1.281785
+-------------+----------------------------------------------------------------
+g2014        |
+ t_2012_2013 |   .3126722   .2123615     1.47   0.141    -.1035487     .728893
+ t_2013_2014 |   .1181944   .0813821     1.45   0.146    -.0413116    .2777004
+ t_2013_2015 |   .1645338   .1077042     1.53   0.127    -.0465625      .37563
+ t_2013_2016 |   .0629658   .1036168     0.61   0.543    -.1401194     .266051
+ t_2013_2017 |   .1241266    .111343     1.11   0.265    -.0941017    .3423549
+ t_2013_2018 |   .1315733   .1138451     1.16   0.248    -.0915591    .3547056
+ t_2013_2019 |   .1285739   .1211593     1.06   0.289    -.1088939    .3660417
+-------------+----------------------------------------------------------------
+g2015        |
+ t_2012_2013 |   -.495928    .109527    -4.53   0.000    -.7105971    -.281259
+ t_2013_2014 |   .1000403   .0321721     3.11   0.002     .0369842    .1630965
+ t_2014_2015 |   .0861739   .0216716     3.98   0.000     .0436984    .1286493
+ t_2014_2016 |   .0760691     .02435     3.12   0.002      .028344    .1237943
+ t_2014_2017 |   .0423393   .0275401     1.54   0.124    -.0116383    .0963169
+ t_2014_2018 |   .0410563   .0289574     1.42   0.156    -.0156992    .0978117
+ t_2014_2019 |   .0385099   .0316404     1.22   0.224    -.0235041     .100524
+-------------+----------------------------------------------------------------
+g2016        |
+ t_2012_2013 |  -.0076295   .1357657    -0.06   0.955    -.2737254    .2584663
+ t_2013_2014 |   .0008467   .0296574     0.03   0.977    -.0572807    .0589741
+ t_2014_2015 |  -.1601026   .0384172    -4.17   0.000     -.235399   -.0848063
+ t_2015_2016 |   .0447261   .0199623     2.24   0.025     .0056007    .0838515
+ t_2015_2017 |   .0565141   .0256409     2.20   0.028     .0062588    .1067694
+ t_2015_2018 |   .0598211   .0286415     2.09   0.037     .0036848    .1159573
+ t_2015_2019 |   .0199606   .0333554     0.60   0.550    -.0454148    .0853359
+-------------+----------------------------------------------------------------
+g2017        |
+ t_2012_2013 |   .4948591   .1379118     3.59   0.000     .2245568    .7651613
+ t_2013_2014 |   .0129473    .025879     0.50   0.617    -.0377747    .0636692
+ t_2014_2015 |  -.0271227   .0271732    -1.00   0.318    -.0803812    .0261359
+ t_2015_2016 |  -.0040228   .0146092    -0.28   0.783    -.0326562    .0246106
+ t_2016_2017 |  -.0143672   .0081924    -1.75   0.079     -.030424    .0016897
+ t_2016_2018 |  -.0189806    .011393    -1.67   0.096    -.0413104    .0033492
+ t_2016_2019 |  -.0178421   .0143162    -1.25   0.213    -.0459014    .0102172
+------------------------------------------------------------------------------
+Control: Not yet Treated
+
+See Callaway and Sant'Anna (2021) for details
+
+. capture noisily estat pretrend
+Pretrend Test. H0 All Pre-treatment are equal to 0
+chi2(10) =    61.5926
+p-value  =     0.0000
+
+. estat simple, estore(cs_pharm_ln_1km)
+Average Treatment Effect on Treated
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+         ATT |   .0325487   .0119269     2.73   0.006     .0091723     .055925
+------------------------------------------------------------------------------
+
+. estat event, window(-4 4) estore(cse_pharm_ln_1km)
+ATT by Periods Before and After treatment
+Event Study:Dynamic effects
+------------------------------------------------------------------------------
+             | Coefficient  Std. err.      z    P>|z|     [95% conf. interval]
+-------------+----------------------------------------------------------------
+     Pre_avg |     .10144   .0351133     2.89   0.004     .0326192    .1702607
+    Post_avg |   .0434502   .0154432     2.81   0.005      .013182    .0737183
+         Tm4 |   .4948591   .1379118     3.59   0.000     .2245568    .7651613
+         Tm3 |   .0096371   .0308347     0.31   0.755    -.0507978     .070072
+         Tm2 |  -.0986466   .0260627    -3.78   0.000    -.1497286   -.0475645
+         Tm1 |  -.0000897   .0140153    -0.01   0.995    -.0275591    .0273797
+         Tp0 |   .0139998   .0080914     1.73   0.084    -.0018589    .0298586
+         Tp1 |   .0178249   .0106346     1.68   0.094    -.0030185    .0386683
+         Tp2 |   .0263678   .0129384     2.04   0.042     .0010089    .0517267
+         Tp3 |   .0620938   .0236964     2.62   0.009     .0156498    .1085378
+         Tp4 |   .0969646   .0357879     2.71   0.007     .0268215    .1671076
+------------------------------------------------------------------------------
+
+. coefplot cse_pharm_ln_1km, keep(Tm4 Tm3 Tm2 Tp0 Tp1 Tp2 Tp3 Tp4) vertical ///
+>     coeflabels(Tm4="-4" Tm3="-3" Tm2="-2" Tp0="0" Tp1="1" Tp2="2" Tp3="3" Tp4="4") ///
+>     xline(3.5, lcolor(red) lpattern(dash)) yline(0, lcolor(gs8)) recast(scatter) ciopts(recast(rcap)) ///
+>     title("Hospital CSDID ln pharmacy count, 1km") xtitle("Years relative to reform; -1 omitted") ytitle("ATT") name(cse_pharm_ln_1km, replace)
+
+. graph export "D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_ln_1km.png", replace width(2000)
+file D:\Hospital_Pharmacy program\output\regression\hospital_v6\csdid_event_pharm_ln_1km.png saved as PNG format
+
+. 
+. csdid ln_pharm_2km ln_ntl_mean_2km if sample_hospital, ivar(hospital_id) time(year) gvar(g_csdid) ///
+>     method(dripw) notyet vce(cluster county_id_num)
+Panel is not balanced
+Will use observations with Pair balanced (observed at t0 and t1)
