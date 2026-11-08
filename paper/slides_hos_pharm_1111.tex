@@ -1,0 +1,665 @@
+% !TEX program = xelatex
+\documentclass[aspectratio=169,11pt]{beamer}
+\usepackage{fontspec}
+\IfFontExistsTF{Latin Modern Roman}{\setmainfont{Latin Modern Roman}}{\setmainfont{Times New Roman}}
+\usepackage{graphicx,booktabs,amsmath,amssymb,xcolor}
+\usetheme{default}
+\usecolortheme{default}
+\usefonttheme{serif}
+\usefonttheme{professionalfonts}
+\definecolor{AcademicBlue}{RGB}{51,51,179}
+\setbeamercolor{normal text}{fg=black,bg=white}
+\setbeamercolor{structure}{fg=AcademicBlue}
+\setbeamercolor{title}{fg=AcademicBlue}
+\setbeamercolor{frametitle}{fg=AcademicBlue,bg=white}
+\setbeamercolor{block title}{fg=AcademicBlue,bg=white}
+\setbeamercolor{block body}{fg=black,bg=white}
+\setbeamerfont{normal text}{family=\rmfamily,size=\normalsize}
+\setbeamerfont{title}{family=\rmfamily,size=\LARGE,series=\mdseries}
+\setbeamerfont{frametitle}{family=\rmfamily,size=\Large,series=\mdseries}
+\setbeamerfont{author}{family=\rmfamily,size=\large}
+\setbeamerfont{institute}{family=\rmfamily,size=\normalsize}
+\setbeamerfont{date}{family=\rmfamily,size=\normalsize}
+\setbeamerfont{block title}{family=\rmfamily,size=\normalsize,series=\mdseries}
+\setbeamerfont{block body}{family=\rmfamily,size=\small}
+\setbeamerfont{footline}{family=\rmfamily,size=\scriptsize}
+\setbeamertemplate{navigation symbols}{}
+
+\setbeamertemplate{itemize item}{%
+    \small\raise0.15ex\hbox{$\bullet$}%
+}
+
+\setbeamertemplate{itemize subitem}{%
+    \scriptsize\raise0.15ex\hbox{$\bullet$}%
+}
+
+\setbeamertemplate{footline}{%
+    \hfill
+    \usebeamerfont{footline}%
+    \usebeamercolor[fg]{structure}%
+    \insertframenumber\,/\,\inserttotalframenumber
+    \hspace{1em}\vspace{0.6em}%
+}
+
+\setbeamersize{
+    text margin left=0.7cm,
+    text margin right=0.7cm
+}
+\renewcommand{\arraystretch}{1.16}
+\title{Pharmacies at the Hospital Gate:\\Drug Markup Regulation and Spatial Concentration}
+\author{Wenxia Chen}
+\institute{Xiamen University}
+\date{November 11, 2026}
+\newcommand{\allresultsroot}{D:/Hospital_Pharmacy program/results/results_v6_slides_1111}
+\newcommand{\paperresultsroot}{\allresultsroot}
+% Change this path only if your output directory has moved.
+\newcommand{\resultsroot}{../data/hospital_pharmacy/county_pharm_panel/results_county_v4}
+\newcommand{\hospresultsroot}{../data/hospital_pharmacy/hosp_pharm_panel/results_v5_all_public}
+\newcommand{\resultimage}[2]{%
+  \IfFileExists{\resultsroot/#1_regression/#2}{%
+    \includegraphics[width=\linewidth,height=0.58\textheight,keepaspectratio]{\resultsroot/#1_regression/#2}%
+  }{%
+    \fbox{\parbox[c][0.42\textheight][c]{0.90\linewidth}{%
+      \centering\scriptsize Missing image:\\
+      Sample: \texttt{#1}\\Check the image path in the source.}}%
+  }%
+}
+\newcommand{\eventimage}[1]{%
+  \IfFileExists{\resultsroot/#1}{%
+    \includegraphics[height=0.67\textheight,keepaspectratio]{\resultsroot/#1}%
+  }{%
+    \fbox{\parbox[c][0.50\textheight][c]{0.85\linewidth}{%
+      \centering\scriptsize Missing full-sample event-study image.}}%
+  }%
+}
+\newcommand{\countywideimage}[1]{%
+  \IfFileExists{\resultsroot/#1}{%
+    \includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{\resultsroot/#1}%
+  }{%
+    \fbox{\parbox[c][0.55\textheight][c]{0.90\linewidth}{%
+      \centering\scriptsize Missing county-level image.}}%
+  }%
+}
+\newcommand{\countypairimage}[1]{%
+  \IfFileExists{\resultsroot/#1}{%
+    \includegraphics[width=\linewidth,height=0.66\textheight,keepaspectratio]{\resultsroot/#1}%
+  }{%
+    \fbox{\parbox[c][0.50\textheight][c]{0.90\linewidth}{%
+      \centering\scriptsize Missing county-level image.}}%
+  }%
+}
+\newcommand{\hospresultimage}[1]{%
+  \IfFileExists{\hospresultsroot/#1}{%
+    \includegraphics[width=\linewidth,height=0.54\textheight,keepaspectratio]{\hospresultsroot/#1}%
+  }{%
+    \fbox{\parbox[c][0.42\textheight][c]{0.90\linewidth}{%
+      \centering\scriptsize Missing hospital-level image.}}%
+  }%
+}
+\newcommand{\hosplargeimage}[1]{%
+  \IfFileExists{\hospresultsroot/#1}{%
+    \includegraphics[width=0.92\textwidth,height=0.72\textheight,keepaspectratio]{\hospresultsroot/#1}%
+  }{%
+    \fbox{\parbox[c][0.55\textheight][c]{0.85\textwidth}{%
+      \centering\scriptsize Missing hospital-level image.}}%
+  }%
+}
+\newcommand{\hospquadimage}[1]{%
+  \IfFileExists{\hospresultsroot/#1}{%
+    \includegraphics[width=\linewidth,height=0.335\textheight,keepaspectratio]{\hospresultsroot/#1}%
+  }{%
+    \fbox{\parbox[c][0.26\textheight][c]{0.90\linewidth}{%
+      \centering\scriptsize Missing hospital-level image.}}%
+  }%
+}
+\newcommand{\threepanels}[2]{%
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.325\textwidth}
+      \centering\small Full sample (bz)\\[0.5em]\resultimage{bz}{#1}
+    \end{column}
+    \begin{column}{0.325\textwidth}
+      \centering\small AOI sample\\[0.5em]\resultimage{AOI}{#1}
+    \end{column}
+    \begin{column}{0.325\textwidth}
+      \centering\small Open sample\\[0.5em]\resultimage{open}{#1}
+    \end{column}
+  \end{columns}
+  \par#2
+}
+\newcommand{\sectiondivider}[1]{%
+  \begin{frame}
+    \vfill
+    \centering
+    {\usebeamercolor[fg]{structure}\LARGE #1}
+    \vfill
+  \end{frame}%
+}
+
+\begin{document}
+\begin{frame}[plain]
+  \titlepage
+\end{frame}
+\sectiondivider{Background and Data}
+\begin{frame}{Institutional Background}
+China's pharmaceutical reform had two key components. These components
+have potentially ambiguous implications for retail pharmacies.
+\begin{itemize}\setlength\itemsep{1.2em}
+  \item[$\uparrow$] \textbf{Separated prescribing from dispensing:} allowing
+patients to fill prescriptions at retail pharmacies rather than purchasing drugs exclusively from
+hospitals.
+  \item[$\downarrow$] \textbf{Reduced drug prices in public hospitals:} by requiring them to sell medications
+at procurement cost, eliminating the previous markup on drug sales.
+\end{itemize}
+\end{frame}
+\begin{frame}{Reform Rollout and Scope}
+\vspace{-0.95em}
+\small
+The reform began with county-level public-hospital pilots and expanded nationwide in stages.
+\begin{itemize}
+  \setlength\itemsep{1.2em}
+  \setlength\topsep{1.2em}
+  \item In 2012, the first pilot covered roughly 300 counties or county-level cities.
+  \item By September 2017, public hospitals nationwide had removed drug mark-ups, except for designated traditional Chinese medicine products.
+\end{itemize}
+\end{frame}
+\begin{frame}{Data}
+\small
+\begin{itemize}\setlength\itemsep{0.65em}
+ \item Business-Registration: Hospitals records, ownership, opening and cancellation dates, and geographic coordinates. 
+  \item DZDP: Pharmacies records and locations.
+  \item Official government documents and related reports: county policy years.
+  \item 2,512 counties and 110,547 hospital-year observations covering 2013--2018.
+  \item Counties appear in every year, before the centralized drug procurement policy announced in November 2018 and piloted from January 2019.
+\end{itemize}
+\end{frame}
+
+\sectiondivider{Framework and Empirical Strategy}
+
+\begin{frame}{Conceptual Framework}
+\small
+A pharmacy at distance $d$ from hospital $h$ serves residential demand $A(d)$ and
+hospital-related demand $F_hs(d)\theta$. With margin $m$ and fixed costs and rent $c(d)$,
+\[
+\pi_h(d)=m\bigl[A(d)+F_hs(d)\theta\bigr]-c(d). \tag{1}
+\]
+The reform raises the outside prescription share from $\theta$ to $\theta+\delta$ and
+lowers the retail margin from $m$ to $m-\kappa$. Holding competition and rents fixed,
+\[
+\Delta\pi_h(d)=F_hs(d)\bigl[(m-\kappa)\delta-\kappa\theta\bigr]-\kappa A(d). \tag{2}
+\]
+\begin{itemize}\setlength\itemsep{0.45em}
+ \item The prescription gain scales with patient volume $F_h$ and declines with distance through $s(d)$.
+ \item The residential margin loss does not depend on the hospital.
+ \item Pharmacy entry should shift toward the gates of large hospitals and away from surrounding neighborhoods.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Hospital-Level Sample, Treatment, and Distance Rings}
+\small
+\begin{itemize}\setlength\itemsep{0.5em}
+ \item 28,989 hospitals; 110,547 hospital-years, 2013--2018, in the balanced set of 2,512 counties.
+ \item All public hospitals, including public TCM hospitals, are treated from the first calendar year after county adoption. Private hospitals are comparisons.
+ \item Three disjoint bands: gate (0--200 m), near ring (200--500 m), outer ring (500--1,000 m). Also report the 0--1,000 m total.
+\end{itemize}
+\[
+ NetEntry_{htr}=Stock_{htr}-Stock_{h,t-1,r}. \tag{3}
+\]
+\footnotesize Net entry is undefined in the first hospital-year and after a gap.
+The preferred lag-valid regression sample has 74,924 observations; stock regressions have 103,766.
+\end{frame}
+
+\begin{frame}{Summary Statistics}
+\centering\scriptsize\setlength{\tabcolsep}{5.5pt}
+{\renewcommand{\arraystretch}{1.02}\input{table_summary_statistics_1028.tex}}
+\par\vspace{0.35em}
+\raggedright\tiny
+Notes: The sample contains the hospital-years in the net-entry regressions. Pharmacy counts are active Dianping pharmacies within each radius, and net entry is the annual change in that count. Tier shares use hospitals with a classified tier.
+\end{frame}
+
+\begin{frame}{Baseline Model}
+\small
+\[
+ Y_{hctr}=\beta_r\bigl(Public_h\times Post_{ct}\bigr)
+             +\alpha_h+\lambda_{ct}+\varepsilon_{hctr}. \tag{4}
+\]
+\begin{itemize}\setlength\itemsep{0.65em}
+ \item $Y_{hctr}$ is net pharmacy entry or the pharmacy stock in distance band $r$ around hospital $h$ in county $c$ and year $t$.
+ \item $Post_{ct}=\mathbb{1}\{t>PolicyYear_c\}$.
+ \item Hospital FE $\alpha_h$ absorb fixed hospital and neighborhood characteristics.
+ \item County-by-year FE $\lambda_{ct}$ compare public and private hospitals in the same county-year and absorb county-wide reform and local shocks.
+ \item County-clustered standard errors. Parallel trends are required for the public--private difference in net entry.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Event-Study Specification and Timing}
+\small
+\[
+ Y_{hctr}=\sum_{k\ne-1}\beta_{kr}
+ Public_h\mathbb{1}\{t-T_c=k\}
+ +\alpha_h+\lambda_{ct}+\varepsilon_{hctr}. \tag{5}
+\]
+\begin{itemize}\setlength\itemsep{0.6em}
+ \item $T_c$ is the last pre-reform year, so $k=0$ is the first reformed year and $k=-1$ is the omitted reference.
+ \item Endpoints bin four or more years before and after the reform.
+ \item Joint lead tests use the estimable pre-reform indicators.
+ \item Confidence intervals and joint tests use standard errors clustered by county.
+\end{itemize}
+\end{frame}
+\begin{frame}{Net Pharmacy Entry at the Gate: Event Study}
+\centering
+\includegraphics[width=0.88\textwidth,height=0.70\textheight,keepaspectratio]{\paperresultsroot/figure_event_gate.pdf}
+\par\footnotesize The vertical line separates the omitted pre-period from the adoption year.
+The joint test of the pre-reform coefficients has $p=0.137$. The test does not establish parallel trends.
+\end{frame}
+
+\begin{frame}{Effects of the Zero-Markup Reform on Pharmacies by Distance}
+\centering\scriptsize\setlength{\tabcolsep}{5.5pt}
+\input{table_main_results_1028.tex}
+\par\vspace{0.45em}
+\raggedright\scriptsize
+Notes: All regressions include hospital and county-by-year fixed effects. Standard errors clustered by county are in parentheses. $^{*}p<0.10$, $^{**}p<0.05$, $^{***}p<0.01$.
+\end{frame}
+
+\begin{frame}{Effects on Pharmacies by Distance Ring}
+\centering
+\includegraphics[width=0.88\textwidth,height=0.70\textheight,keepaspectratio]{\paperresultsroot/figure_ring_effects.pdf}
+\par\footnotesize Circles: annual net entry. Diamonds: active pharmacies.
+Bars show 95\% confidence intervals; effects are estimated directly on each ring.
+\end{frame}
+
+\begin{frame}{Gross Pharmacy Entry and Exit}
+\centering
+\small
+\setlength{\tabcolsep}{8pt}
+\begin{tabular}{lrrrr}
+\toprule
+& 200 m & 500 m & 800 m & 1,000 m \\
+\midrule
+Gross entry
+& 0.043$^{***}$ & 0.068$^{**}$ & 0.006 & -0.052 \\
+& (0.014) & (0.030) & (0.048) & (0.058) \\
+Gross exit
+& -0.027$^{**}$ & -0.043$^{*}$ & -0.001 & -0.018 \\
+& (0.011) & (0.026) & (0.046) & (0.060) \\
+\midrule
+Outcome mean: entry & 0.227 & 1.019 & 2.215 & 3.163 \\
+Outcome mean: exit & 0.122 & 0.567 & 1.243 & 1.785 \\
+Observations & 93,265 & 93,265 & 93,265 & 93,265 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.7em}
+\footnotesize
+The gate effect combines more pharmacy appearances with fewer disappearances. Neither margin changes at wider radii.
+\par\vspace{0.35em}
+\raggedright\scriptsize Notes: Entry is a \texttt{shop\_id} observed in year $t$ but not $t-1$; exit is defined conversely. These are platform appearance and disappearance measures. Models absorb hospital and county-by-year fixed effects; standard errors are clustered by county. $^{*}p<0.10$, $^{**}p<0.05$, $^{***}p<0.01$.
+\end{frame}
+
+\begin{frame}{Gross Pharmacy Entry: Event Studies}
+\centering
+\includegraphics[width=0.96\textwidth,height=0.69\textheight,keepaspectratio]{\allresultsroot/gross_event_entry_combined.pdf}
+\par\footnotesize The omitted period is one year before the policy year. Each panel reports the joint test of the estimable pre-reform coefficients; bars show 95\% confidence intervals.
+\end{frame}
+
+\begin{frame}{Gross Pharmacy Exit: Event Studies}
+\centering
+\includegraphics[width=0.96\textwidth,height=0.69\textheight,keepaspectratio]{\allresultsroot/gross_event_exit_combined.pdf}
+\par\footnotesize The omitted period is one year before the policy year. Each panel reports the joint test of the estimable pre-reform coefficients; bars show 95\% confidence intervals.
+\end{frame}
+
+\begin{frame}{Stacked DID: Effects by Distance Ring}
+\centering\small\setlength{\tabcolsep}{7pt}
+\input{table_stacked_rings_1028.tex}
+\par\vspace{0.7em}
+\raggedright\footnotesize
+The mutually exclusive rings reproduce the baseline spatial pattern. Net entry rises at the gate and falls in the outer ring, leaving the 1 km total small and imprecise. The stock estimates show the same reallocation.
+\par\vspace{0.35em}
+\scriptsize Notes: Each stack pairs one public-hospital cohort with private hospitals in counties containing both groups. Models absorb stack-by-hospital and stack-by-county-by-year fixed effects. County-clustered standard errors are in parentheses. $^{*}p<0.10$, $^{**}p<0.05$, $^{***}p<0.01$.
+\end{frame}
+
+\begin{frame}{Robustness: Stacked DID with County-by-Year Fixed Effects}
+\centering\small\setlength{\tabcolsep}{7pt}
+\input{\paperresultsroot/table_stacked_did.tex}
+\par\vspace{0.7em}
+\raggedright\footnotesize
+Each stack pairs one public-hospital treatment cohort with non-public hospitals in counties containing both groups. The model absorbs stack-by-hospital and stack-by-county-by-year fixed effects; standard errors are clustered by county. Net entry rises within 200 m and 500 m, then becomes small and imprecise at wider radii. Stock estimates are supporting evidence because their lead tests reject.
+\end{frame}
+
+\begin{frame}{Stacked DID: Net-Entry Event Studies}
+\centering
+\includegraphics[width=0.94\textwidth,height=0.68\textheight,keepaspectratio]{\paperresultsroot/figure_stacked_event_ne_200_500.pdf}
+\par\vspace{0.35em}
+\footnotesize The omitted period is one year before treatment. The vertical line marks the transition into treatment. Joint lead-test $p$-values are 0.102 within 200 m and 0.707 within 500 m; bars show 95\% confidence intervals.
+\end{frame}
+
+\begin{frame}{Robustness: Estimators and Treatment Definitions}
+\centering\scriptsize\setlength{\tabcolsep}{5pt}
+{\renewcommand{\arraystretch}{1.06}\input{table_robustness_1028.tex}}
+\par\vspace{0.2em}
+\raggedright\tiny
+Notes: Annual net pharmacy entry within each radius. All models include hospital and county-by-year fixed effects. County-clustered standard errors are in parentheses. $^{*}p<0.10$, $^{**}p<0.05$, $^{***}p<0.01$.
+\end{frame}
+
+\begin{frame}{Placebo: Non-Pharmacy Wellness Establishments}
+\centering
+\small
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{lcccc}
+\toprule
+ & 0--200 m & 200--500 m & 500--1,000 m & 0--1,000 m \\
+\midrule
+Net entry
+ & -0.026 & -0.038 & -0.005 & -0.069 \\
+ & (0.017) & (0.033) & (0.056) & (0.073) \\
+Stock
+ & 0.020 & 0.039 & -0.158$^{**}$ & -0.099 \\
+ & (0.013) & (0.030) & (0.062) & (0.083) \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.7em}
+\footnotesize
+\begin{itemize}\setlength\itemsep{0.45em}
+ \item Net entry does not increase in any distance band; the total stock within 1 km also shows no significant increase.
+ \item The negative stock estimate at 500--1,000 m also provides no evidence of expansion. Together, the results do not support a broad rise in health demand or ordinary commercial growth around hospitals.
+\end{itemize}
+
+\vspace{0.15em}
+\raggedright\scriptsize
+Notes: Outcomes count non-pharmacy wellness establishments. Net entry is the annual change in the count; stock is the annual level. All models absorb hospital and county-by-year fixed effects. Standard errors clustered by county are in parentheses. ** $p<0.05$.
+\end{frame}
+
+\sectiondivider{Concentration around Tertiary Hospitals}
+
+\begin{frame}{Hospital-Tier Model and Formal Difference Tests}
+\small
+\[
+ Y^{(r)}_{hct}=\beta_{1r}D_{hct}
+ +\delta_{2r}D_{hct}\mathbb{1}\{G_h=2\}
+ +\delta_{3r}D_{hct}\mathbb{1}\{G_h=3\}
+ +\alpha_h+\lambda_{c\times t}+\varepsilon^{(r)}_{hct}.
+\]
+\begin{itemize}\setlength\itemsep{0.6em}
+ \item $D_{hct}=Public_h\times Post_{ct}$; $G_h$ is the final hospital-tier classification.
+ \item Total effects: Grade 1 $=\beta_{1r}$; Grade 2 $=\beta_{1r}+\delta_{2r}$; Grade 3 $=\beta_{1r}+\delta_{3r}$.
+ \item The formal Grade 3--Grade 1 contrast is $\delta_{3r}$, computed from the pooled model with its full covariance matrix.
+ \item Tier results use cumulative radii, matching Table 4 of the paper.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Hospital Tier: Annual Net Pharmacy Entry}
+\centering\scriptsize\setlength{\tabcolsep}{7pt}
+\input{\paperresultsroot/table_tier_ne.tex}
+\par\vspace{0.6em}
+\raggedright\footnotesize Classified-tier sample; all public hospitals treated.
+Hospital and county-by-year FE; county-clustered SE.
+Tier includes administrative grades and classifications inferred from hospital scale.
+\end{frame}
+
+\begin{frame}{Hospital Tier: Active Pharmacy Stocks}
+\centering\scriptsize\setlength{\tabcolsep}{7pt}
+\input{\paperresultsroot/table_tier_st.tex}
+\par\vspace{0.6em}
+\raggedright\footnotesize Each radius is estimated in one pooled interaction model.
+The last row formally tests the Grade 3--Grade 1 difference.
+County-clustered SE in parentheses.
+\end{frame}
+
+\begin{frame}{Effects on Pharmacy Stocks by Hospital Tier and Radius}
+\centering
+\includegraphics[width=0.88\textwidth,height=0.70\textheight,keepaspectratio]{\paperresultsroot/figure_tier_st.pdf}
+\par\footnotesize Cumulative radii; total effects from the pooled model.
+Bars show 95\% confidence intervals. Horizontal offsets improve readability.
+\end{frame}
+
+\begin{frame}{Effects on Net Entry by Hospital Tier and Radius}
+\centering
+\includegraphics[width=0.88\textwidth,height=0.70\textheight,keepaspectratio]{\paperresultsroot/figure_tier_ne.pdf}
+\par\footnotesize Grade 3 shows positive net entry; Grade 1 estimates turn negative at wider radii.
+Bars show 95\% confidence intervals.
+\end{frame}
+
+\begin{frame}{Public versus Non-Public Grade 3 Hospitals}
+\centering
+\includegraphics[width=0.88\textwidth,height=0.70\textheight,keepaspectratio]{\paperresultsroot/figure_grade3_public_vs_nonpublic.pdf}
+\par\footnotesize The coefficients are within-tier DID estimates: public Grade 3 hospitals are treated and non-public Grade 3 hospitals are the untreated comparison group. Bars show 95\% confidence intervals.
+\end{frame}
+
+\begin{frame}{Spatial Concentration and Access}
+\small
+\begin{itemize}\setlength\itemsep{0.8em}
+ \item Within hospital neighborhoods: entry at the gate offsets losses in the outer ring, leaving the 1 km total imprecise.
+ \item Across hospitals: supply gains concentrate around Grade 3 public hospitals, while wider-radius stocks fall around Grade 1 hospitals.
+ \item Patients filling hospital prescriptions may gain convenient outside options; residents relying on neighborhood pharmacies may face longer trips.
+ \item Location counts do not identify individual pharmacy relocations or measure patient welfare directly. These remain interpretation and future measurement tasks.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Residential Proximity and Population-Weighted Access}
+\footnotesize
+\begin{columns}[T,onlytextwidth]
+  \begin{column}{0.48\textwidth}
+    {\color{AcademicBlue}\normalsize Pharmacy--community distance}\par\vspace{0.35em}
+    \begin{itemize}\setlength\itemsep{0.4em}
+      \item Residential communities come from annual Amap POI records for 2013--2018.
+      \item For each pharmacy, we calculate the distance to its nearest residential community.
+      \item Hospital-year means use cumulative radii (200, 500, and 1,000 m) and mutually exclusive rings (0--200, 200--500, and 500--1,000 m).
+    \end{itemize}
+  \end{column}
+  \begin{column}{0.48\textwidth}
+    {\color{AcademicBlue}\normalsize Spatial inequality in access}\par\vspace{0.35em}
+    \begin{itemize}\setlength\itemsep{0.4em}
+      \item WorldPop annual population rasters provide approximately 100 m residential demand cells.
+      \item 2SFCA first divides each pharmacy by population in its 500 m catchment, then sums nearby ratios for each grid cell.
+      \item Population-weighted Gini is calculated within 500 m, 2 km, and 3 km of each hospital. The 2 km radius is the main specification.
+      \item Annual population weights are the main measure. Fixed 2013 weights hold population locations constant.
+    \end{itemize}
+  \end{column}
+\end{columns}
+\vfill
+\tiny Sources: Amap POI (residential communities); WorldPop annual gridded population, 2013--2018. Hospital distance is measured from the AOI boundary when available and from the hospital point otherwise.
+\end{frame}
+
+\begin{frame}{Pharmacies Moved Closer to Communities in the 200--500 m Ring}
+\centering
+\footnotesize
+\begin{tabular}{lrrrc}
+\toprule
+Hospital area & DID effect (m) & Standard error & $p$-value & Observations \\
+\midrule
+Stock: within 200 m       & -49.51 & 41.96 & 0.238 & 29,508 \\
+Stock: within 500 m       & -55.08$^{*}$ & 30.68 & 0.073 & 50,036 \\
+Stock: within 1,000 m     & -44.51 & 30.04 & 0.139 & 59,366 \\
+\addlinespace
+Ring: 0--200 m            & -49.51 & 41.96 & 0.238 & 29,508 \\
+Ring: 200--500 m          & -58.51$^{**}$ & 26.20 & 0.026 & 46,205 \\
+Ring: 500--1,000 m        & -18.33 & 18.36 & 0.318 & 54,688 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.55em}
+\begin{itemize}\setlength\itemsep{0.3em}
+  \item Negative coefficients indicate that pharmacies around treated public hospitals became closer to their nearest residential community relative to pharmacies around private hospitals.
+  \item The result is concentrated in the 200--500 m ring: the mean pharmacy--community distance fell by about 59 m.
+\end{itemize}
+\vspace{0.2em}
+\raggedright\tiny Notes: Outcomes are annual changes in the hospital-year mean distance. Models absorb hospital and county-by-year fixed effects; standard errors are clustered by county. $^{*}p<0.10$, $^{**}p<0.05$.
+\end{frame}
+
+\begin{frame}{Relocating Pharmacies: Distances to Communities and Hospitals}
+\centering
+\scriptsize
+\begingroup
+\renewcommand{\arraystretch}{1.02}
+\begin{tabular}{lrrr}
+\toprule
+Hospital area & $\Delta$ nearest community (m) & $\Delta$ nearest hospital (m) & Observations \\
+\midrule
+Stock: within 200 m
+ & -28.42 & -98.00$^{*}$ & 360 \\
+ & (29.91) & (55.72) & \\
+Stock: within 500 m
+ & -35.86 & -63.29 & 5,195 \\
+ & (28.71) & (47.48) & \\
+Stock: within 1,000 m
+ & -5.19 & 30.71 & 19,541 \\
+ & (16.88) & (31.19) & \\
+\addlinespace
+Ring: 0--200 m
+ & -28.42 & -98.00$^{*}$ & 360 \\
+ & (29.91) & (55.72) & \\
+Ring: 200--500 m
+ & -5.50 & -29.48 & 3,260 \\
+ & (18.52) & (36.57) & \\
+Ring: 500--1,000 m
+ & -20.38 & 44.12 & 13,063 \\
+ & (23.16) & (40.34) & \\
+\bottomrule
+\end{tabular}
+\endgroup
+
+\vspace{0.2em}
+\begin{itemize}\setlength\itemsep{0.2em}
+  \item At the hospital gate (0--200 m), relocating pharmacies moved about 98 m closer to their nearest hospital relative to the control group.
+  \item Community-distance effects are negative and insignificant, so the results do not support relocation away from residential communities.
+\end{itemize}
+\vspace{0.05em}
+\raggedright\tiny Notes: A relocating pharmacy is the same \texttt{shop\_id} moving at least 100 m between adjacent years. Outcomes are destination-minus-origin distance changes, evaluated against the same destination-year POI sets. DID models absorb hospital and county-by-year fixed effects; standard errors (in parentheses) are clustered by county. $^{*}p<0.10$.
+\end{frame}
+
+\begin{frame}{Population-Relative Pharmacy-Share Gini: No Robust Reform Effect}
+\centering
+\footnotesize
+\begin{tabular}{lrrr}
+\toprule
+ & 500 m & 2 km (main) & 3 km \\
+\midrule
+Annual population weights
+ & -0.00035 & 0.00002 & -0.00000 \\
+ & (0.00035) & (0.00008) & (0.00006) \\
+Fixed 2013 population weights
+ & -0.00036 & 0.00002 & 0.00001 \\
+ & (0.00035) & (0.00008) & (0.00006) \\
+\addlinespace
+Observations
+ & 72,956 & 90,784 & 93,177 \\
+Lead-test $p$-value (annual weights)
+ & 0.534 & 0.656 & 0.117 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.45em}
+\begin{itemize}\setlength\itemsep{0.25em}
+  \item The Gini compares each grid cell's pharmacy share with its population share; zero indicates proportional spatial matching and larger values indicate greater mismatch.
+  \item The 2 km main estimate is economically tiny and statistically insignificant. Results are similar when population is fixed at its 2013 distribution.
+\end{itemize}
+\vspace{0.1em}
+\raggedright\tiny Notes: WorldPop native population cells are retained, including populated cells with zero pharmacies. Cells are ranked by pharmacies per resident. Models absorb hospital and county-by-year fixed effects; standard errors (in parentheses) are clustered by county. No coefficient is statistically significant at the 10\% level.
+\end{frame}
+
+\begin{frame}{2SFCA Results: No Increase in Spatial Inequality}
+\centering
+\footnotesize
+\begin{tabular}{lrrr}
+\toprule
+ & 500 m & 2 km (main) & 3 km \\
+\midrule
+Annual population weights
+ & -0.0039$^{*}$ & -0.0017$^{*}$ & -0.0011 \\
+ & (0.0023) & (0.0009) & (0.0007) \\
+Fixed 2013 population weights
+ & -0.0038$^{*}$ & -0.0015 & -0.0007 \\
+ & (0.0023) & (0.0009) & (0.0007) \\
+\addlinespace
+Outcome mean (annual weights)
+ & 0.3420 & 0.6016 & 0.6576 \\
+Observations
+ & 84,046 & 92,136 & 93,920 \\
+Lead-test $p$-value
+ & 0.624 & 0.823 & 0.373 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\begin{itemize}\setlength\itemsep{0.25em}
+  \item All estimates are negative. The data provide no evidence that the reform increased inequality in population-adjusted pharmacy accessibility.
+  \item In the 2 km main specification, Gini falls by 0.0017, about 0.3\% of its mean. The lead test provides no evidence of differential pre-trends.
+\end{itemize}
+\vspace{0.15em}
+\raggedright\tiny Notes: 2SFCA accessibility is the sum of pharmacy-to-population ratios within a 500 m floating catchment, scaled per 10,000 residents. The outcome is its population-weighted Gini within each hospital radius. Models absorb hospital and county-by-year fixed effects; standard errors are clustered by county. $^{*}p<0.10$.
+\end{frame}
+
+\sectiondivider{Heterogeneity}
+
+\begin{frame}{County Characteristics and the Net-Entry Effect}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{6.5pt}
+\begin{tabular}{lrrrr}
+\toprule
+DID $\times$ standardized characteristic & 200 m & 500 m & 800 m & 1,000 m \\
+\midrule
+Population age 65+ share
+& 0.027 & 0.092 & 0.119 & 0.276$^{**}$ \\
+& (0.027) & (0.059) & (0.094) & (0.115) \\
+Urban population share
+& 0.045 & 0.094$^{*}$ & 0.097 & 0.162 \\
+& (0.028) & (0.055) & (0.091) & (0.118) \\
+Average years of education
+& 0.065$^{**}$ & 0.128$^{**}$ & 0.160 & 0.226$^{*}$ \\
+& (0.029) & (0.065) & (0.104) & (0.131) \\
+Log population density
+& 0.062$^{**}$ & 0.138$^{**}$ & 0.179$^{*}$ & 0.234$^{**}$ \\
+& (0.027) & (0.057) & (0.092) & (0.118) \\
+\midrule
+Observations & 67,546 & 67,546 & 67,546 & 67,546 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.55em}
+\footnotesize The response is stronger in denser and more educated counties. Urbanization is weaker, while the elderly-share interaction appears only at 1,000 m.
+\par\vspace{0.25em}
+\raggedright\tiny Notes: Each row comes from a separate model. Characteristics are fixed at their 2010 census values and standardized in the estimation sample. Models include the DID main effect, hospital FE, and county-by-year FE; standard errors are clustered by county. The correlated characteristics and multiple tests make these exploratory results. $^{*}p<0.10$, $^{**}p<0.05$.
+\end{frame}
+
+\begin{frame}{General and Specialist Hospitals}
+\centering
+\small
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{lrrrr}
+\toprule
+Net-entry effect & 200 m & 500 m & 800 m & 1,000 m \\
+\midrule
+General hospitals
+& 0.227$^{***}$ & 0.311$^{***}$ & 0.206$^{*}$ & 0.162 \\
+& (0.042) & (0.080) & (0.120) & (0.158) \\
+Specialist hospitals
+& 0.091$^{*}$ & 0.010 & -0.155 & -0.351 \\
+& (0.051) & (0.104) & (0.178) & (0.229) \\
+Specialist minus general
+& -0.136$^{**}$ & -0.301$^{**}$ & -0.360$^{*}$ & -0.513$^{**}$ \\
+& (0.066) & (0.127) & (0.199) & (0.254) \\
+\midrule
+Observations & 55,570 & 55,570 & 55,570 & 55,570 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.7em}
+\footnotesize Pharmacy growth is concentrated around general hospitals. Specialist-hospital effects are small or negative, and the formal specialist-minus-general contrasts are negative at every radius.
+\par\vspace{0.25em}
+\raggedright\scriptsize Notes: The pooled interaction model restricts the sample to hospitals classified as general or specialist. It includes hospital and county-by-year fixed effects; standard errors are clustered by county. $^{*}p<0.10$, $^{**}p<0.05$, $^{***}p<0.01$.
+\end{frame}
+
+\sectiondivider{Conclusion}
+\begin{frame}{Main Findings}
+\small
+\begin{enumerate}\setlength\itemsep{0.55em}
+  \item Hospital net entry rises in the 0--200m gate band and falls in the 500--1,000m outer ring; the 1km total is small and imprecise. Gains concentrate around Grade 3 hospitals.
+  \item At the gate, the reform increases gross pharmacy entry and reduces gross exit. Neither margin changes at wider radii.
+  \item The pharmacy response is stronger in denser and more educated counties, but correlated characteristics and multiple tests make the interaction results exploratory.
+  \item Net entry increases around general hospitals and shows no clear positive response around specialist hospitals.
+  \item Population-adjusted access measures provide no evidence that spatial inequality increased after the reform.
+\end{enumerate}
+\end{frame}
+
+\end{document}

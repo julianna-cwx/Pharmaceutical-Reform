@@ -1,1 +1,23 @@
 data/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# LaTeX build products
+*.aux
+*.log
+*.out
+*.nav
+*.snm
+*.toc
+*.fls
+*.fdb_latexmk
+*.xdv
+*.synctex.gz
+
+# Reproducible local build/check directories
+paper/_compile_output*/
+paper/_slides_check*/
+paper/_template_compile_check/
+tmp/
